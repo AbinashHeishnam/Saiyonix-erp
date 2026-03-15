@@ -1,18 +1,13 @@
 import "dotenv/config";
-import { defineConfig } from "prisma/config";
-
-const url = process.env.DATABASE_URL;
-
-if (!url) {
-  throw new Error("DATABASE_URL is not set. Check your .env file.");
-}
+import { defineConfig, env } from "prisma/config";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
+  datasource: {
+    url: env("DATABASE_URL"),
+  },
   migrations: {
     path: "prisma/migrations",
-  },
-  datasource: {
-    url, // <-- resolved from .env via dotenv
+    seed: "tsx prisma/seed.ts",
   },
 });

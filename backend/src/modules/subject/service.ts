@@ -1,0 +1,102 @@
+import { Prisma } from "@prisma/client";
+
+import prisma from "../../config/prisma";
+import { ApiError } from "../../utils/apiError";
+import type { CreateSubjectInput, UpdateSubjectInput } from "./validation";
+
+function mapPrismaError(error: unknown): never {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2002") {
+      throw new ApiError(409, "Subject code already exists");
+    }
+
+    if (error.code === "P2003") {
+      throw new ApiError(400, "Invalid relation reference");
+    }
+  }
+
+  throw error;
+}
+
+export async function createSubject(schoolId: string, payload: CreateSubjectInput) {
+
+  try {
+    return await prisma.subject.create({
+      data: {
+        schoolId,
+        code: payload.code,
+        name: payload.name,
+        isElective: payload.isElective ?? false,
+      },
+    });
+  } catch (error) {
+    mapPrismaError(error);
+  }
+}
+
+export async function listSubjects(
+  schoolId: string,
+  pagination?: { skip: number; take: number }
+) {
+  const where = { schoolId };
+  const [items, total] = await prisma.$transaction([
+    prisma.subject.findMany({
+      where,
+      orderBy: [{ code: "asc" }, { name: "asc" }],
+      ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}),
+    }),
+    prisma.subject.count({ where }),
+  ]);
+
+  return { items, total };
+}
+
+export async function getSubjectById(schoolId: string, id: string) {
+  const subject = await prisma.subject.findFirst({
+    where: {
+      id,
+      schoolId,
+    },
+  });
+
+  if (!subject) {
+    throw new ApiError(404, "Subject not found");
+  }
+
+  return subject;
+}
+
+export async function updateSubject(
+  schoolId: string,
+  id: string,
+  payload: UpdateSubjectInput
+) {
+  await getSubjectById(schoolId, id);
+
+  try {
+    return await prisma.subject.update({
+      where: { id },
+      data: {
+        ...(payload.code !== undefined ? { code: payload.code } : {}),
+        ...(payload.name !== undefined ? { name: payload.name } : {}),
+        ...(payload.isElective !== undefined ? { isElective: payload.isElective } : {}),
+      },
+    });
+  } catch (error) {
+    mapPrismaError(error);
+  }
+}
+
+export async function deleteSubject(schoolId: string, id: string) {
+  await getSubjectById(schoolId, id);
+
+  try {
+    await prisma.subject.delete({
+      where: { id },
+    });
+  } catch (error) {
+    mapPrismaError(error);
+  }
+
+  return { id };
+}
