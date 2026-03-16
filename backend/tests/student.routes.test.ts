@@ -1,39 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockPrisma } from "./helpers/mockPrisma";
 import request from "supertest";
 
 vi.mock("../src/config/prisma", () => ({
-  default: {
-    academicYear: { findFirst: vi.fn() },
-    class: { findFirst: vi.fn() },
-    section: { findFirst: vi.fn() },
-    student: {
-      create: vi.fn(),
-      findMany: vi.fn(),
-      findFirst: vi.fn(),
-      update: vi.fn(),
-      count: vi.fn(),
-    },
-    studentProfile: {
-      findFirst: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-    },
-    parent: {
-      findFirst: vi.fn(),
-      create: vi.fn(),
-    },
-    parentStudentLink: {
-      findFirst: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-    },
-    studentEnrollment: {
-      findFirst: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-    },
-    $transaction: vi.fn(),
-  },
+  default: createMockPrisma(),
 }));
 
 vi.mock("../src/modules/auth/permission.service", () => ({

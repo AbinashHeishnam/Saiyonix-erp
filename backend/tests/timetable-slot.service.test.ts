@@ -1,23 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockPrisma } from "./helpers/mockPrisma";
 
 vi.mock("../src/config/prisma", () => ({
-  default: {
-    academicYear: { findFirst: vi.fn() },
-    teacher: { findFirst: vi.fn() },
-    period: { findFirst: vi.fn() },
-    section: { findFirst: vi.fn() },
-    classSubject: { findFirst: vi.fn() },
-    teacherSubjectClass: { findFirst: vi.fn() },
-    timetableSlot: {
-      create: vi.fn(),
-      findMany: vi.fn(),
-      findFirst: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      count: vi.fn(),
-    },
-    $transaction: vi.fn(),
-  },
+  default: createMockPrisma(),
 }));
 
 import prisma from "../src/config/prisma";
@@ -36,13 +21,19 @@ function mockDependencies() {
   mockedPrisma.academicYear.findFirst.mockResolvedValue({ id: "ay-1" } as never);
   mockedPrisma.teacher.findFirst.mockResolvedValue({ id: "teacher-1" } as never);
   mockedPrisma.period.findFirst.mockResolvedValue({ id: "period-1" } as never);
+  mockedPrisma.period.count.mockResolvedValue(6 as never);
   mockedPrisma.section.findFirst.mockResolvedValue({ id: "section-1", classId: "class-1" } as never);
+  mockedPrisma.class.findFirst.mockResolvedValue({
+    id: "class-1",
+    isHalfDay: false,
+  } as never);
   mockedPrisma.classSubject.findFirst.mockResolvedValue({
     id: "class-subject-1",
     classId: "class-1",
     class: { academicYearId: "ay-1" },
   } as never);
   mockedPrisma.teacherSubjectClass.findFirst.mockResolvedValue({ id: "tsc-1" } as never);
+  mockedPrisma.timetableSlot.count.mockResolvedValue(0 as never);
 }
 
 describe("timetableSlot.service", () => {

@@ -1,7 +1,8 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../utils/apiError";
+import prisma from "../../core/db/prisma";
+import { ApiError } from "../../core/errors/apiError";
 import { success } from "../../utils/apiResponse";
 import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
 import {
@@ -33,6 +34,53 @@ function parseId(id: unknown) {
   }
 
   return parsed.data;
+}
+
+async function ensureStudentSelfAccess(
+  req: AuthRequest,
+  schoolId: string,
+  studentId: string
+) {
+  const roleType = req.user?.roleType;
+  if (!roleType) {
+    throw new ApiError(401, "Unauthorized");
+  }
+
+  if (roleType === "STUDENT") {
+    const student = await prisma.student.findFirst({
+      where: {
+        id: studentId,
+        schoolId,
+        userId: req.user?.sub,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (!student) {
+      throw new ApiError(403, "Forbidden: cannot access this student timetable");
+    }
+  }
+
+  if (roleType === "PARENT") {
+    const parent = await prisma.parent.findFirst({
+      where: { schoolId, userId: req.user?.sub },
+      select: { id: true },
+    });
+
+    if (!parent) {
+      throw new ApiError(403, "Forbidden: parent account not linked");
+    }
+
+    const link = await prisma.parentStudentLink.findFirst({
+      where: { parentId: parent.id, studentId },
+      select: { id: true },
+    });
+
+    if (!link) {
+      throw new ApiError(403, "Forbidden: cannot access this student timetable");
+    }
+  }
 }
 
 export async function create(req: AuthRequest, res: Response, next: NextFunction) {
@@ -103,6 +151,7 @@ export async function getTimetable(
   try {
     const schoolId = getSchoolId(req);
     const id = parseId(req.params.id);
+    await ensureStudentSelfAccess(req, schoolId, id);
     const data = await getStudentTimetableService(schoolId, id);
     return success(res, data, "Student timetable fetched successfully");
   } catch (error) {

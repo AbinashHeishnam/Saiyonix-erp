@@ -1,23 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockPrisma } from "./helpers/mockPrisma";
 
 vi.mock("../src/config/prisma", () => ({
-  default: {
-    academicYear: { findFirst: vi.fn() },
-    section: { findFirst: vi.fn() },
-    timetableSlot: { findFirst: vi.fn() },
-    teacher: { findFirst: vi.fn() },
-    studentEnrollment: { findMany: vi.fn() },
-    studentAttendance: {
-      findMany: vi.fn(),
-      findFirst: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      count: vi.fn(),
-    },
-    attendanceCorrection: { create: vi.fn() },
-    attendanceAuditLog: { create: vi.fn() },
-    $transaction: vi.fn(),
-  },
+  default: createMockPrisma(),
+}));
+
+vi.mock("../src/modules/notification/service", () => ({
+  trigger: vi.fn(),
 }));
 
 import prisma from "../src/config/prisma";
@@ -50,6 +39,13 @@ describe("studentAttendance.service", () => {
     mockedPrisma.section.findFirst.mockResolvedValue({
       id: "section-1",
       classTeacherId: "teacher-1",
+    } as never);
+    mockedPrisma.systemSetting.findMany.mockResolvedValue([
+      { settingKey: "ATTENDANCE_WINDOW_MINUTES", settingValue: 1440 },
+      { settingKey: "ATTENDANCE_WARNING_LEVELS", settingValue: [85, 80, 75] },
+    ] as never);
+    mockedPrisma.period.findFirst.mockResolvedValue({
+      startTime: new Date(Date.UTC(1970, 0, 1, 0, 0, 0)),
     } as never);
     mockedPrisma.timetableSlot.findFirst.mockResolvedValue({ id: "slot-1" } as never);
     mockedPrisma.teacher.findFirst.mockResolvedValue({ id: "teacher-1" } as never);

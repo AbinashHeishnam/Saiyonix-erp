@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../../config/prisma";
-import { ApiError } from "../../utils/apiError";
+import prisma from "../../core/db/prisma";
+import { ApiError } from "../../core/errors/apiError";
+import { markAttendance, updateAttendance } from "../attendance/service";
 import type {
   CreateStudentAttendanceInput,
   UpdateStudentAttendanceInput,
@@ -21,6 +22,8 @@ type ActorContext = {
   userId?: string;
   roleType?: string;
 };
+
+// TODO(attendance): studentAttendance is a legacy wrapper; migrate callers to src/modules/attendance.
 
 function mapPrismaError(error: unknown): never {
   const code =
@@ -209,10 +212,17 @@ export async function markStudentAttendance(
   payload: CreateStudentAttendanceInput,
   actor: ActorContext
 ) {
-  const attendanceDate = toDateOnly(payload.attendanceDate);
-  const studentIds = payload.records.map((record) => record.studentId);
-
   try {
+    if (actor.roleType === "TEACHER" && !payload.markedByTeacherId) {
+      return await markAttendance(schoolId, payload, {
+        userId: actor.userId,
+        roleType: actor.roleType,
+      });
+    }
+
+    const attendanceDate = toDateOnly(payload.attendanceDate);
+    const studentIds = payload.records.map((record) => record.studentId);
+
     return await prisma.$transaction(async (tx) => {
       await ensureAcademicYearBelongsToSchool(tx, schoolId, payload.academicYearId);
       const section = await ensureSectionBelongsToSchool(
@@ -253,24 +263,30 @@ export async function markStudentAttendance(
 
       await ensureAttendanceNotMarked(tx, { studentIds, attendanceDate });
 
-      const created = [];
-      for (const record of payload.records) {
-        const entry = await tx.studentAttendance.create({
-          data: {
-            studentId: record.studentId,
-            academicYearId: payload.academicYearId,
-            sectionId: payload.sectionId,
-            timetableSlotId: payload.timetableSlotId,
-            attendanceDate,
-            status: record.status,
-            markedByTeacherId: teacherId,
-            remarks: record.remarks,
-          },
-        });
-        created.push(entry);
-      }
+      const entries = payload.records.map((record) => ({
+        studentId: record.studentId,
+        academicYearId: payload.academicYearId,
+        sectionId: payload.sectionId,
+        timetableSlotId: payload.timetableSlotId,
+        attendanceDate,
+        status: record.status,
+        markedByTeacherId: teacherId,
+        remarks: record.remarks,
+      }));
 
-      return created;
+      await tx.studentAttendance.createMany({
+        data: entries,
+      });
+
+      return tx.studentAttendance.findMany({
+        where: {
+          studentId: { in: studentIds },
+          attendanceDate,
+          academicYearId: payload.academicYearId,
+          sectionId: payload.sectionId,
+          timetableSlotId: payload.timetableSlotId,
+        },
+      });
     });
   } catch (error) {
     mapPrismaError(error);
@@ -307,11 +323,14 @@ export async function listStudentAttendance(
   const [items, total] = await prisma.$transaction([
     prisma.studentAttendance.findMany({
       where,
-      include: {
-        student: true,
-        section: true,
-        timetableSlot: true,
-        academicYear: true,
+      select: {
+        id: true,
+        studentId: true,
+        attendanceDate: true,
+        status: true,
+        remarks: true,
+        createdAt: true,
+        updatedAt: true,
       },
       orderBy: [{ attendanceDate: "desc" }, { createdAt: "desc" }],
       ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}),
@@ -355,6 +374,13 @@ export async function updateStudentAttendance(
   actor: ActorContext
 ) {
   try {
+    if (actor.roleType === "TEACHER") {
+      return await updateAttendance(schoolId, id, payload, {
+        userId: actor.userId,
+        roleType: actor.roleType,
+      });
+    }
+
     return await prisma.$transaction(async (tx) => {
       const record = await tx.studentAttendance.findFirst({
         where: {
@@ -411,6 +437,9 @@ export async function updateStudentAttendance(
             newStatus: payload.status,
             reason: payload.correctionReason ?? "Correction",
             correctedById: actor.userId ?? null,
+            correctedAt: new Date(),
+            status: "APPROVED",
+            requestedById: actor.userId ?? null,
           },
         });
       }

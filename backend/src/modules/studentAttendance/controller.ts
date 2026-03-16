@@ -1,9 +1,9 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../utils/apiError";
+import { ApiError } from "../../core/errors/apiError";
 import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import { buildPaginationMetaWithSync, parsePagination } from "../../utils/pagination";
 import {
   getStudentAttendanceById,
   listStudentAttendance,
@@ -76,7 +76,7 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
       items,
       "Attendance records fetched successfully",
       200,
-      buildPaginationMeta(total, pagination)
+      buildPaginationMetaWithSync(total, pagination)
     );
   } catch (error) {
     return next(error);

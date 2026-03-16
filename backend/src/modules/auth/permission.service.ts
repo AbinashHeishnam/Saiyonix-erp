@@ -1,4 +1,4 @@
-import prisma from "../../config/prisma";
+import prisma from "../../core/db/prisma";
 
 const ROLE_PERMISSION_CACHE_TTL_MS = 60_000;
 

@@ -1,21 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockPrisma } from "./helpers/mockPrisma";
 
 vi.mock("../src/config/prisma", () => ({
-  default: {
-    class: {
-      findFirst: vi.fn(),
-    },
-    subject: {
-      findFirst: vi.fn(),
-    },
-    classSubject: {
-      create: vi.fn(),
-      findFirst: vi.fn(),
-      findMany: vi.fn(),
-      count: vi.fn(),
-    },
-    $transaction: vi.fn(),
-  },
+  default: createMockPrisma(),
 }));
 
 import prisma from "../src/config/prisma";

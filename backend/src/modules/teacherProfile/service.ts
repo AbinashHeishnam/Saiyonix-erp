@@ -1,5 +1,5 @@
-import prisma from "../../config/prisma";
-import { ApiError } from "../../utils/apiError";
+import prisma from "../../core/db/prisma";
+import { ApiError } from "../../core/errors/apiError";
 import type {
   CreateTeacherProfileInput,
   UpdateTeacherProfileInput,

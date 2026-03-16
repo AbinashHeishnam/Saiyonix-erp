@@ -1,24 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockPrisma } from "./helpers/mockPrisma";
 import request from "supertest";
 
 vi.mock("../src/config/prisma", () => ({
-  default: {
-    academicYear: { findFirst: vi.fn() },
-    teacher: { findFirst: vi.fn() },
-    period: { findFirst: vi.fn() },
-    section: { findFirst: vi.fn() },
-    classSubject: { findFirst: vi.fn() },
-    teacherSubjectClass: { findFirst: vi.fn() },
-    timetableSlot: {
-      create: vi.fn(),
-      findMany: vi.fn(),
-      findFirst: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      count: vi.fn(),
-    },
-    $transaction: vi.fn(),
-  },
+  default: createMockPrisma(),
 }));
 
 vi.mock("../src/utils/jwt", () => ({
@@ -72,9 +57,14 @@ describe("timetable slot routes", () => {
     mockedPrisma.academicYear.findFirst.mockResolvedValue({ id: ids.academicYearId } as never);
     mockedPrisma.teacher.findFirst.mockResolvedValue({ id: ids.teacherId } as never);
     mockedPrisma.period.findFirst.mockResolvedValue({ id: ids.periodId } as never);
+    mockedPrisma.period.count.mockResolvedValue(6 as never);
     mockedPrisma.section.findFirst.mockResolvedValue({
       id: ids.sectionId,
       classId: "class-1",
+    } as never);
+    mockedPrisma.class.findFirst.mockResolvedValue({
+      id: "class-1",
+      isHalfDay: false,
     } as never);
     mockedPrisma.classSubject.findFirst.mockResolvedValue({
       id: ids.classSubjectId,
@@ -82,6 +72,7 @@ describe("timetable slot routes", () => {
       class: { academicYearId: ids.academicYearId },
     } as never);
     mockedPrisma.teacherSubjectClass.findFirst.mockResolvedValue({ id: "tsc-1" } as never);
+    mockedPrisma.timetableSlot.count.mockResolvedValue(0 as never);
     mockedPrisma.$transaction.mockImplementation(async (input) => {
       if (Array.isArray(input)) {
         return Promise.all(input);

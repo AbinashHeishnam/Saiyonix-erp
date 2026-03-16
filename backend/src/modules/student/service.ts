@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../../config/prisma";
-import { ApiError } from "../../utils/apiError";
+import prisma from "../../core/db/prisma";
+import { ApiError } from "../../core/errors/apiError";
+import { listTimetableForStudent } from "../timetableSlot/service";
 import type {
   CreateStudentInput,
   EnrollmentInput,
@@ -580,58 +581,5 @@ export async function deleteStudent(schoolId: string, id: string) {
 }
 
 export async function getStudentTimetable(schoolId: string, studentId: string) {
-  await ensureStudentExists(schoolId, studentId);
-
-  const enrollment = await prisma.studentEnrollment.findFirst({
-    where: {
-      studentId,
-      student: { schoolId, deletedAt: null },
-    },
-    orderBy: { createdAt: "desc" },
-    select: {
-      sectionId: true,
-      academicYearId: true,
-    },
-  });
-
-  if (!enrollment) {
-    throw new ApiError(404, "Student enrollment not found");
-  }
-
-  const slots = await prisma.timetableSlot.findMany({
-    where: {
-      sectionId: enrollment.sectionId,
-      academicYearId: enrollment.academicYearId,
-      section: {
-        deletedAt: null,
-        class: { schoolId, deletedAt: null },
-      },
-      classSubject: {
-        class: { schoolId, deletedAt: null },
-        subject: { schoolId },
-      },
-    },
-    orderBy: [{ dayOfWeek: "asc" }, { period: { periodNumber: "asc" } }],
-    select: {
-      dayOfWeek: true,
-      period: { select: { periodNumber: true } },
-      classSubject: {
-        select: { subject: { select: { name: true } } },
-      },
-      section: {
-        select: {
-          sectionName: true,
-          class: { select: { className: true } },
-        },
-      },
-    },
-  });
-
-  return slots.map((slot) => ({
-    dayOfWeek: slot.dayOfWeek,
-    periodNumber: slot.period.periodNumber,
-    subjectName: slot.classSubject.subject.name,
-    sectionName: slot.section.sectionName,
-    className: slot.section.class.className,
-  }));
+  return listTimetableForStudent(schoolId, studentId);
 }

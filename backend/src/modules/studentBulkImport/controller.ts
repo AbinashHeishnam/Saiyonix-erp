@@ -1,7 +1,7 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../utils/apiError";
+import { ApiError } from "../../core/errors/apiError";
 import { success } from "../../utils/apiResponse";
 import { importStudentsFromFile, previewStudentsFromFile } from "./service";
 import { bulkImportQuerySchema } from "./validation";

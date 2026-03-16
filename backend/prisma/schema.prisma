@@ -21,12 +21,41 @@ enum AttendanceStatus {
   ABSENT
   LATE
   HALF_DAY
+  EXCUSED
+}
+
+enum AttendanceCorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum LeaveStatus {
   PENDING
   APPROVED
   REJECTED
+  CANCELLED
+}
+
+enum LeaveType {
+  SICK
+  CASUAL
+  EMERGENCY
+  OTHER
+}
+
+enum CircularTargetType {
+  ALL
+  CLASS
+  SECTION
+  ROLE
+}
+
+enum NoticeTargetType {
+  ALL
+  CLASS
+  SECTION
+  ROLE
 }
 
 enum ComplaintStatus {
@@ -652,6 +681,7 @@ model StudentEnrollment {
   @@index([academicYearId])
   @@index([classId])
   @@index([sectionId])
+  @@index([sectionId, rollNumber])
 }
 
 model StudentAttendance {
@@ -676,9 +706,13 @@ model StudentAttendance {
   approvals       AttendanceApproval[]
   auditLogs       AttendanceAuditLog[]
 
-  @@unique([studentId, attendanceDate])
+  @@unique([studentId, timetableSlotId, attendanceDate])
   @@index([studentId])
+  @@index([studentId, academicYearId])
+  @@index([studentId, attendanceDate])
+  @@index([attendanceDate])
   @@index([academicYearId])
+  @@index([sectionId])
   @@index([sectionId, attendanceDate])
   @@index([timetableSlotId])
   @@index([markedByTeacherId])
@@ -706,8 +740,12 @@ model AttendanceCorrection {
   oldStatus     AttendanceStatus
   newStatus     AttendanceStatus
   reason        String
+  status        AttendanceCorrectionStatus @default(APPROVED)
+  requestedById String?
+  requestedAt   DateTime         @default(now())
+  reviewRemarks String?
   correctedById String?
-  correctedAt   DateTime         @default(now())
+  correctedAt   DateTime?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
 
@@ -737,9 +775,10 @@ model StudentLeave {
   fromDate          DateTime    @db.Date
   toDate            DateTime    @db.Date
   reason            String
+  leaveType         LeaveType?
   status            LeaveStatus @default(PENDING)
-  reviewedById      String?
-  reviewedAt        DateTime?
+  approvedById      String?
+  approvedAt        DateTime?
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
@@ -747,6 +786,8 @@ model StudentLeave {
   appliedByParent Parent? @relation(fields: [appliedByParentId], references: [id])
 
   @@index([studentId])
+  @@index([studentId, fromDate, toDate])
+  @@index([status])
 }
 
 /// ============================
@@ -834,14 +875,18 @@ model TeacherLeave {
   fromDate     DateTime    @db.Date
   toDate       DateTime    @db.Date
   reason       String?
+  leaveType    LeaveType?
   status       LeaveStatus @default(PENDING)
   approvedById String?
+  approvedAt   DateTime?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
   teacher Teacher @relation(fields: [teacherId], references: [id])
 
   @@index([teacherId])
+  @@index([teacherId, fromDate, toDate])
+  @@index([status])
 }
 
 model TeacherSubjectClass {
@@ -905,6 +950,8 @@ model Note {
   section      Section?     @relation(fields: [sectionId], references: [id])
 
   @@index([teacherId])
+  @@index([classSubjectId])
+  @@index([sectionId, createdAt])
 }
 
 model Assignment {
@@ -925,6 +972,8 @@ model Assignment {
   submissions  AssignmentSubmission[]
 
   @@index([teacherId])
+  @@index([classSubjectId])
+  @@index([sectionId, dueAt])
 }
 
 model AssignmentSubmission {
@@ -944,6 +993,8 @@ model AssignmentSubmission {
   student    Student    @relation(fields: [studentId], references: [id])
 
   @@unique([assignmentId, studentId])
+  @@index([assignmentId])
+  @@index([assignmentId, submittedAt])
   @@index([studentId])
 }
 
@@ -995,6 +1046,7 @@ model SyllabusProgressLog {
   teacher       Teacher       @relation(fields: [teacherId], references: [id])
 
   @@index([teacherId])
+  @@index([syllabusTopicId])
 }
 
 /// ============================
@@ -1041,6 +1093,7 @@ model ExamSubject {
 
   @@unique([examId, classSubjectId])
   @@index([examId])
+  @@index([classSubjectId])
 }
 
 model ExamTimetable {
@@ -1057,6 +1110,7 @@ model ExamTimetable {
 
   @@unique([examSubjectId, examDate])
   @@index([examSubjectId])
+  @@index([examDate])
 }
 
 model Mark {
@@ -1077,6 +1131,7 @@ model Mark {
   editLogs         MarkEditLog[]
 
   @@unique([examSubjectId, studentId])
+  @@index([examSubjectId])
   @@index([studentId])
   @@index([enteredByTeacherId])
 }
@@ -1116,6 +1171,7 @@ model ReportCard {
   student Student @relation(fields: [studentId], references: [id])
 
   @@unique([examId, studentId])
+  @@index([examId])
   @@index([studentId])
 }
 
@@ -1135,6 +1191,7 @@ model AdmitCard {
   student Student @relation(fields: [studentId], references: [id])
 
   @@unique([examId, studentId])
+  @@index([examId])
   @@index([studentId])
 }
 
@@ -1153,6 +1210,8 @@ model RankSnapshot {
   student Student @relation(fields: [studentId], references: [id])
 
   @@unique([examId, studentId])
+  @@index([examId])
+  @@index([examId, classRank])
   @@index([studentId])
 }
 
@@ -1473,6 +1532,7 @@ model Notification {
   recipients NotificationRecipient[]
 
   @@index([schoolId])
+  @@index([sentAt])
 }
 
 model NotificationRecipient {
@@ -1491,6 +1551,21 @@ model NotificationRecipient {
   @@index([userId])
 }
 
+model NotificationJob {
+  id             String   @id @default(cuid())
+  schoolId       String
+  idempotencyKey String   @unique
+  status         String
+  payload        Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([status, updatedAt])
+}
+
 model NoticeBoard {
   id          String    @id @default(uuid())
   schoolId    String
@@ -1498,6 +1573,10 @@ model NoticeBoard {
   content     String
   noticeType  String
   isPublic    Boolean   @default(false)
+  targetType  NoticeTargetType @default(ALL)
+  targetClassId   String?
+  targetSectionId String?
+  targetRole      UserRole?
   publishedAt DateTime?
   expiresAt   DateTime?
   createdById String?
@@ -1507,22 +1586,31 @@ model NoticeBoard {
   school School @relation(fields: [schoolId], references: [id])
 
   @@index([schoolId])
+  @@index([publishedAt])
+  @@index([expiresAt])
 }
 
 model Circular {
-  id          String    @id @default(uuid())
-  schoolId    String
-  title       String
-  fileUrl     String?
-  summary     String?
-  publishedAt DateTime?
-  createdById String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id              String             @id @default(cuid())
+  schoolId        String
+  title           String
+  body            String
+  attachments     Json?
+  targetType      CircularTargetType
+  targetClassId   String?
+  targetSectionId String?
+  targetRole      UserRole?
+  publishedAt     DateTime?
+  expiresAt       DateTime?
+  createdById     String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   school School @relation(fields: [schoolId], references: [id])
 
   @@index([schoolId])
+  @@index([publishedAt])
+  @@index([expiresAt])
 }
 
 model MessageThread {

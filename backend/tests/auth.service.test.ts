@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockPrisma } from "./helpers/mockPrisma";
 
 vi.mock("jsonwebtoken", () => ({
   default: {
@@ -10,23 +11,9 @@ vi.mock("uuid", () => ({
   v4: vi.fn(() => "refresh-token"),
 }));
 
-vi.mock("../src/config/prisma", () => {
-  return {
-    default: {
-      school: {
-        findUnique: vi.fn(),
-      },
-      user: {
-        create: vi.fn(),
-        findUnique: vi.fn(),
-        update: vi.fn(),
-      },
-      session: {
-        create: vi.fn(),
-      },
-    },
-  };
-});
+vi.mock("../src/config/prisma", () => ({
+  default: createMockPrisma(),
+}));
 
 vi.mock("../src/utils/password", () => ({
   hashPassword: vi.fn(async () => "hashed-password"),

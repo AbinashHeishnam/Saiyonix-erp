@@ -1,7 +1,8 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../utils/apiError";
+import prisma from "../../core/db/prisma";
+import { ApiError } from "../../core/errors/apiError";
 import { success } from "../../utils/apiResponse";
 import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
 import {
@@ -35,6 +36,35 @@ function parseId(id: unknown) {
   }
 
   return parsed.data;
+}
+
+async function ensureTeacherSelfAccess(
+  req: AuthRequest,
+  schoolId: string,
+  teacherId: string
+) {
+  const roleType = req.user?.roleType;
+  if (!roleType) {
+    throw new ApiError(401, "Unauthorized");
+  }
+
+  if (roleType !== "TEACHER") {
+    return;
+  }
+
+  const teacher = await prisma.teacher.findFirst({
+    where: {
+      id: teacherId,
+      schoolId,
+      userId: req.user?.sub,
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+
+  if (!teacher) {
+    throw new ApiError(403, "Forbidden: cannot access this teacher timetable");
+  }
 }
 
 export async function createTeacher(req: AuthRequest, res: Response, next: NextFunction) {
@@ -120,6 +150,7 @@ export async function getTeacherTimetable(
   try {
     const schoolId = getSchoolId(req);
     const id = parseId(req.params.id);
+    await ensureTeacherSelfAccess(req, schoolId, id);
     const data = await getTeacherTimetableService(schoolId, id);
     return success(res, data, "Teacher timetable fetched successfully");
   } catch (error) {

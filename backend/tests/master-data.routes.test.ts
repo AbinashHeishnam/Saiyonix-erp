@@ -1,22 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockPrisma } from "./helpers/mockPrisma";
 import request from "supertest";
 
 vi.mock("../src/config/prisma", () => ({
-  default: {
-    user: {
-      findUnique: vi.fn(),
-    },
-    academicYear: {
-      findFirst: vi.fn(),
-    },
-    class: {
-      create: vi.fn(),
-      findFirst: vi.fn(),
-    },
-    section: {
-      create: vi.fn(),
-    },
-  },
+  default: createMockPrisma(),
 }));
 
 vi.mock("../src/utils/jwt", () => ({

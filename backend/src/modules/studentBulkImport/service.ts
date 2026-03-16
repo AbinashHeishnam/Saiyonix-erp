@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 
-import prisma from "../../config/prisma";
-import { ApiError } from "../../utils/apiError";
+import prisma from "../../core/db/prisma";
+import { ApiError } from "../../core/errors/apiError";
 import {
   studentBulkImportRowSchema,
   type StudentBulkImportRowInput,
@@ -59,6 +59,8 @@ type FileType = "csv" | "xlsx";
 type ImportOptions = {
   batchSize: number;
 };
+
+const MAX_BULK_IMPORT_ROWS = 5000;
 
 const headerAliases: Record<string, keyof StudentBulkImportRowInput> = {
   "full name": "fullName",
@@ -690,6 +692,11 @@ export async function importStudentsFromFile(
 ): Promise<ImportResult> {
   const rawRows = parseFile(buffer, fileType);
   const parsedRows = buildRows(rawRows);
+
+  if (parsedRows.length > MAX_BULK_IMPORT_ROWS) {
+    throw new ApiError(413, `Too many rows. Maximum allowed is ${MAX_BULK_IMPORT_ROWS}.`);
+  }
+
   const { normalized, errors } = normalizeRows(parsedRows);
 
   if (normalized.length === 0) {
@@ -785,6 +792,11 @@ export async function previewStudentsFromFile(
 ): Promise<PreviewResult> {
   const rawRows = parseFile(buffer, fileType);
   const parsedRows = buildRows(rawRows);
+
+  if (parsedRows.length > MAX_BULK_IMPORT_ROWS) {
+    throw new ApiError(413, `Too many rows. Maximum allowed is ${MAX_BULK_IMPORT_ROWS}.`);
+  }
+
   const { normalized, errors } = normalizeRows(parsedRows);
 
   if (normalized.length === 0) {

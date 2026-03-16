@@ -11,7 +11,7 @@ import {
 } from "./auth.service";
 import { success } from "../../utils/apiResponse";
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../utils/apiError";
+import { ApiError } from "../../core/errors/apiError";
 
 export async function register(req: Request, res: Response, next: NextFunction) {
   try {

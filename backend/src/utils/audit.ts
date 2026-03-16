@@ -1,4 +1,4 @@
-import prisma from "../config/prisma";
+import prisma from "../core/db/prisma";
 
 type AuditParams = {
   userId?: string;

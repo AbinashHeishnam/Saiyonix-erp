@@ -34,7 +34,7 @@ teacherRouter.get(
   "/:id/timetable",
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
-  requirePermission("teacher:read"),
+  requirePermission("timetableSlot:read"),
   getTeacherTimetable
 );
 teacherRouter.get("/:id", authMiddleware, getTeacher);

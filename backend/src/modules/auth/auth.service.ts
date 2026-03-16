@@ -1,11 +1,11 @@
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
 
-import prisma from "../../config/prisma";
+import prisma from "../../core/db/prisma";
 import { comparePassword, hashPassword } from "../../utils/password";
 import { logAudit } from "../../utils/audit";
 import { logger } from "../../utils/logger";
-import { ApiError } from "../../utils/apiError";
+import { ApiError } from "../../core/errors/apiError";
 
 type RegisterInput = {
   email: string;

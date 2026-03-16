@@ -1,23 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockPrisma } from "./helpers/mockPrisma";
 
 vi.mock("bcrypt", () => ({
   default: {
+    systemSetting: { findMany: vi.fn() },
     hash: vi.fn(async () => "hashed-otp"),
     compare: vi.fn(async () => true),
   },
 }));
 
 vi.mock("../src/config/prisma", () => ({
-  default: {
-    user: {
-      findUnique: vi.fn(),
-    },
-    otpLog: {
-      findFirst: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-    },
-  },
+  default: createMockPrisma(),
 }));
 
 vi.mock("../src/services/sms.service", () => ({

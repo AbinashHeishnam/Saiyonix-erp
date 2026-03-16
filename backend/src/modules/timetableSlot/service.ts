@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../../config/prisma";
-import { ApiError } from "../../utils/apiError";
+import prisma from "../../core/db/prisma";
+import { ApiError } from "../../core/errors/apiError";
 import type { CreateTimetableSlotInput, UpdateTimetableSlotInput } from "./validation";
 
 type ClassSubjectLookup = {
@@ -10,6 +10,24 @@ type ClassSubjectLookup = {
 };
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
+type TimetableEntry = {
+  dayOfWeek: string;
+  periodNumber: number;
+  subjectName: string;
+  className: string;
+  sectionName: string;
+  teacherName: string | null;
+};
+
+const DAY_OF_WEEK_NAMES = [
+  "MONDAY",
+  "TUESDAY",
+  "WEDNESDAY",
+  "THURSDAY",
+  "FRIDAY",
+  "SATURDAY",
+  "SUNDAY",
+] as const;
 
 function mapPrismaError(error: unknown): never {
   const code =
@@ -94,6 +112,23 @@ async function ensureSectionBelongsToSchool(
   return section;
 }
 
+async function ensureClassBelongsToSchool(
+  client: DbClient,
+  schoolId: string,
+  classId: string
+) {
+  const classRecord = await client.class.findFirst({
+    where: { id: classId, schoolId, deletedAt: null },
+    select: { id: true, isHalfDay: true },
+  });
+
+  if (!classRecord) {
+    throw new ApiError(400, "Class not found for this school");
+  }
+
+  return classRecord;
+}
+
 async function ensureClassSubjectBelongsToSchool(
   client: DbClient,
   schoolId: string,
@@ -120,6 +155,54 @@ async function ensureClassSubjectBelongsToSchool(
     classId: classSubject.classId,
     academicYearId: classSubject.class.academicYearId,
   };
+}
+
+async function ensurePeriodLimitForDay(
+  client: DbClient,
+  params: {
+    schoolId: string;
+    sectionId: string;
+    classId: string;
+    dayOfWeek: number;
+    excludeId?: string;
+  }
+) {
+  const totalPeriods = await client.period.count({
+    where: { schoolId: params.schoolId },
+  });
+
+  if (totalPeriods <= 0) {
+    throw new ApiError(400, "Period configuration is missing for this school");
+  }
+
+  const classRecord = await ensureClassBelongsToSchool(
+    client,
+    params.schoolId,
+    params.classId
+  );
+
+  const maxAllowed = classRecord.isHalfDay
+    ? Math.floor(totalPeriods / 2)
+    : totalPeriods;
+
+  if (maxAllowed <= 0) {
+    throw new ApiError(400, "Invalid half-day period configuration");
+  }
+
+  const existingCount = await client.timetableSlot.count({
+    where: {
+      sectionId: params.sectionId,
+      dayOfWeek: params.dayOfWeek,
+      ...(params.excludeId ? { NOT: { id: params.excludeId } } : {}),
+    },
+  });
+
+  if (existingCount >= maxAllowed) {
+    throw new ApiError(
+      400,
+      "Timetable exceeds the maximum periods allowed for the day"
+    );
+  }
 }
 
 async function ensureTeacherAssignmentExists(
@@ -249,13 +332,38 @@ async function getTimetableSlotByIdWithClient(
   return record;
 }
 
+function mapDayOfWeek(dayOfWeek: number) {
+  return DAY_OF_WEEK_NAMES[dayOfWeek - 1] ?? "UNKNOWN";
+}
+
+function toTimetableEntry(slot: {
+  dayOfWeek: number;
+  period: { periodNumber: number };
+  classSubject: { subject: { name: string } };
+  section: { sectionName: string; class: { className: string } };
+  teacher: { fullName: string } | null;
+}): TimetableEntry {
+  return {
+    dayOfWeek: mapDayOfWeek(slot.dayOfWeek),
+    periodNumber: slot.period.periodNumber,
+    subjectName: slot.classSubject.subject.name,
+    className: slot.section.class.className,
+    sectionName: slot.section.sectionName,
+    teacherName: slot.teacher?.fullName ?? null,
+  };
+}
+
 export async function createTimetableSlot(
   schoolId: string,
   payload: CreateTimetableSlotInput
 ) {
   try {
     return await prisma.$transaction(async (tx) => {
-      await ensureSectionBelongsToSchool(tx, schoolId, payload.sectionId);
+      const section = await ensureSectionBelongsToSchool(
+        tx,
+        schoolId,
+        payload.sectionId
+      );
       const classSubject = await ensureClassSubjectBelongsToSchool(
         tx,
         schoolId,
@@ -280,6 +388,13 @@ export async function createTimetableSlot(
           academicYearId: payload.academicYearId,
         });
       }
+
+      await ensurePeriodLimitForDay(tx, {
+        schoolId,
+        sectionId: payload.sectionId,
+        classId: section.classId,
+        dayOfWeek: payload.dayOfWeek,
+      });
 
       await ensureNoSectionConflict(tx, {
         sectionId: payload.sectionId,
@@ -374,7 +489,7 @@ export async function updateTimetableSlot(
       const dayOfWeek = payload.dayOfWeek ?? existing.dayOfWeek;
       const periodId = payload.periodId ?? existing.periodId;
 
-      await ensureSectionBelongsToSchool(tx, schoolId, sectionId);
+      const section = await ensureSectionBelongsToSchool(tx, schoolId, sectionId);
       const classSubject = await ensureClassSubjectBelongsToSchool(
         tx,
         schoolId,
@@ -399,6 +514,14 @@ export async function updateTimetableSlot(
           academicYearId,
         });
       }
+
+      await ensurePeriodLimitForDay(tx, {
+        schoolId,
+        sectionId,
+        classId: section.classId,
+        dayOfWeek,
+        excludeId: existing.id,
+      });
 
       await ensureNoSectionConflict(tx, {
         sectionId,
@@ -458,4 +581,125 @@ export async function deleteTimetableSlot(schoolId: string, id: string) {
   }
 
   return { id };
+}
+
+export async function listTimetableForSection(schoolId: string, sectionId: string) {
+  await ensureSectionBelongsToSchool(prisma, schoolId, sectionId);
+
+  const slots = await prisma.timetableSlot.findMany({
+    where: {
+      sectionId,
+      section: {
+        deletedAt: null,
+        class: { schoolId, deletedAt: null },
+      },
+      classSubject: {
+        class: { schoolId, deletedAt: null },
+        subject: { schoolId },
+      },
+    },
+    orderBy: [{ dayOfWeek: "asc" }, { period: { periodNumber: "asc" } }],
+    select: {
+      dayOfWeek: true,
+      period: { select: { periodNumber: true } },
+      classSubject: { select: { subject: { select: { name: true } } } },
+      section: {
+        select: { sectionName: true, class: { select: { className: true } } },
+      },
+      teacher: { select: { fullName: true } },
+    },
+  });
+
+  return slots.map(toTimetableEntry);
+}
+
+export async function listTimetableForTeacher(schoolId: string, teacherId: string) {
+  const teacher = await prisma.teacher.findFirst({
+    where: { id: teacherId, schoolId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!teacher) {
+    throw new ApiError(404, "Teacher not found");
+  }
+
+  const slots = await prisma.timetableSlot.findMany({
+    where: {
+      teacherId,
+      section: {
+        deletedAt: null,
+        class: { schoolId, deletedAt: null },
+      },
+      classSubject: {
+        class: { schoolId, deletedAt: null },
+        subject: { schoolId },
+      },
+    },
+    orderBy: [{ dayOfWeek: "asc" }, { period: { periodNumber: "asc" } }],
+    select: {
+      dayOfWeek: true,
+      period: { select: { periodNumber: true } },
+      classSubject: { select: { subject: { select: { name: true } } } },
+      section: {
+        select: { sectionName: true, class: { select: { className: true } } },
+      },
+      teacher: { select: { fullName: true } },
+    },
+  });
+
+  return slots.map(toTimetableEntry);
+}
+
+export async function listTimetableForStudent(schoolId: string, studentId: string) {
+  const student = await prisma.student.findFirst({
+    where: { id: studentId, schoolId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!student) {
+    throw new ApiError(404, "Student not found");
+  }
+
+  const enrollment = await prisma.studentEnrollment.findFirst({
+    where: {
+      studentId,
+      student: { schoolId, deletedAt: null },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      sectionId: true,
+      academicYearId: true,
+    },
+  });
+
+  if (!enrollment) {
+    throw new ApiError(404, "Student enrollment not found");
+  }
+
+  const slots = await prisma.timetableSlot.findMany({
+    where: {
+      sectionId: enrollment.sectionId,
+      academicYearId: enrollment.academicYearId,
+      section: {
+        deletedAt: null,
+        class: { schoolId, deletedAt: null },
+      },
+      classSubject: {
+        class: { schoolId, deletedAt: null },
+        subject: { schoolId },
+      },
+    },
+    orderBy: [{ dayOfWeek: "asc" }, { period: { periodNumber: "asc" } }],
+    select: {
+      dayOfWeek: true,
+      period: { select: { periodNumber: true } },
+      classSubject: { select: { subject: { select: { name: true } } } },
+      section: {
+        select: { sectionName: true, class: { select: { className: true } } },
+      },
+      teacher: { select: { fullName: true } },
+    },
+  });
+
+  return slots.map(toTimetableEntry);
 }

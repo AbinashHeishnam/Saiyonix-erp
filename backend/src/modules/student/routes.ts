@@ -21,7 +21,7 @@ studentRouter.get(
   "/:id/timetable",
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER", "PARENT", "STUDENT"),
-  requirePermission("student:read"),
+  requirePermission("timetableSlot:read"),
   getTimetable
 );
 studentRouter.get("/", authMiddleware, list);

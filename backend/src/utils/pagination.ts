@@ -46,3 +46,13 @@ export function buildPaginationMeta(
     totalPages,
   };
 }
+
+export function buildPaginationMetaWithSync(
+  total: number,
+  params: Pick<PaginationParams, "page" | "limit">
+) {
+  return {
+    ...buildPaginationMeta(total, params),
+    syncTimestamp: new Date().toISOString(),
+  };
+}

@@ -1,9 +1,10 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../utils/apiError";
+import { ApiError } from "../../core/errors/apiError";
 import { success } from "../../utils/apiResponse";
 import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import { listTimetableForSection } from "../timetableSlot/service";
 import {
   createSection,
   deleteSection,
@@ -90,6 +91,21 @@ export async function remove(req: AuthRequest, res: Response, next: NextFunction
     const id = parseId(req.params.id);
     const data = await deleteSection(schoolId, id);
     return success(res, data, "Section deleted successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getTimetable(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const id = parseId(req.params.id);
+    const data = await listTimetableForSection(schoolId, id);
+    return success(res, data, "Section timetable fetched successfully");
   } catch (error) {
     return next(error);
   }

@@ -1,5 +1,6 @@
-import prisma from "../../config/prisma";
-import { ApiError } from "../../utils/apiError";
+import prisma from "../../core/db/prisma";
+import { ApiError } from "../../core/errors/apiError";
+import { listTimetableForTeacher } from "../timetableSlot/service";
 import type {
   CreateTeacherInput,
   UpdateTeacherInput,
@@ -125,43 +126,5 @@ export async function updateTeacherStatus(
 }
 
 export async function getTeacherTimetable(schoolId: string, id: string) {
-  await getTeacherById(schoolId, id);
-
-  const slots = await prisma.timetableSlot.findMany({
-    where: {
-      teacherId: id,
-      section: {
-        deletedAt: null,
-        class: { schoolId, deletedAt: null },
-      },
-      classSubject: {
-        class: { schoolId, deletedAt: null },
-        subject: { schoolId },
-      },
-    },
-    orderBy: [{ dayOfWeek: "asc" }, { period: { periodNumber: "asc" } }],
-    select: {
-      dayOfWeek: true,
-      period: { select: { periodNumber: true } },
-      classSubject: {
-        select: {
-          subject: { select: { name: true } },
-        },
-      },
-      section: {
-        select: {
-          sectionName: true,
-          class: { select: { className: true } },
-        },
-      },
-    },
-  });
-
-  return slots.map((slot) => ({
-    dayOfWeek: slot.dayOfWeek,
-    periodNumber: slot.period.periodNumber,
-    subjectName: slot.classSubject.subject.name,
-    sectionName: slot.section.sectionName,
-    className: slot.section.class.className,
-  }));
+  return listTimetableForTeacher(schoolId, id);
 }

@@ -72,13 +72,31 @@ const permissionKeys = [
   "exam:read",
   "fee:create",
   "fee:collect",
-  "fee:read"
+  "fee:read",
+  "notice:create",
+  "notice:read",
+  "notice:update",
+  "notice:delete",
+  "circular:create",
+  "circular:read",
+  "circular:update",
+  "circular:delete",
+  "notification:send"
 ] as const
 
 const permissionDescriptions: Partial<Record<(typeof permissionKeys)[number], string>> =
   {
     "attendance:mark": "Mark student attendance",
-    "attendance:update": "Update student attendance"
+    "attendance:update": "Update student attendance",
+    "notice:create": "Create notice",
+    "notice:read": "Read notices",
+    "notice:update": "Update notice",
+    "notice:delete": "Delete notice",
+    "circular:create": "Create circular",
+    "circular:read": "Read circulars",
+    "circular:update": "Update circular",
+    "circular:delete": "Delete circular",
+    "notification:send": "Send notifications"
   }
 
 async function seedRoles() {
@@ -177,7 +195,10 @@ async function seedRolePermissions() {
       key.startsWith("student:") ||
       key.startsWith("teacher:") ||
       key.startsWith("attendance:") ||
-      key.startsWith("exam:")
+      key.startsWith("exam:") ||
+      key.startsWith("notice:") ||
+      key.startsWith("circular:") ||
+      key.startsWith("notification:")
   )
 
   const financePermissions = permissionKeys.filter((key) =>
@@ -194,10 +215,23 @@ async function seedRolePermissions() {
       "attendance:mark",
       "attendance:update",
       "attendance:read",
-      "student:read"
+      "student:read",
+      "timetableSlot:read",
+      "notice:read",
+      "circular:read"
     ],
-    [UserRole.PARENT]: ["student:read"],
-    [UserRole.STUDENT]: ["student:read"]
+    [UserRole.PARENT]: [
+      "student:read",
+      "timetableSlot:read",
+      "notice:read",
+      "circular:read"
+    ],
+    [UserRole.STUDENT]: [
+      "student:read",
+      "timetableSlot:read",
+      "notice:read",
+      "circular:read"
+    ]
   }
 
   const targetRoles: UserRole[] = [
