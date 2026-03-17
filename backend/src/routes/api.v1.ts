@@ -10,6 +10,7 @@ import noticeRouter from "../modules/noticeBoard/routes";
 import circularRouter from "../modules/circular/routes";
 import dashboardRouter from "../modules/dashboard/routes";
 import notificationRouter from "../modules/notification/routes";
+import notesRouter from "../modules/notes/routes";
 import otpRouter from "../modules/otp/otp.routes";
 import paymentRouter from "../modules/payment/payment.routes";
 import periodRouter from "../modules/period/routes";
@@ -69,6 +70,7 @@ router.use("/notices", noticeRouter);
 router.use("/circulars", circularRouter);
 router.use("/dashboard", dashboardRouter);
 router.use("/notifications", notificationRouter);
+router.use("/notes", notesRouter);
 router.use("/payments", paymentRouter);
 
 export default router;
