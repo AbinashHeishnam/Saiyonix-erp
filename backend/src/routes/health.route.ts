@@ -1,7 +1,7 @@
 import { Router } from "express";
 
-import prisma from "../core/db/prisma";
-import { getNotificationWorkerStatus } from "../core/jobs/notificationWorker";
+import prisma from "@/core/db/prisma";
+import { getNotificationWorkerStatus } from "@/core/jobs/notificationWorker";
 
 const router = Router();
 

@@ -1,13 +1,14 @@
 import crypto from "crypto";
+import Razorpay from "razorpay";
 
-import { razorpayConfig } from "../config/externalServices";
-import { ApiError } from "../errors/apiError";
+import { getRazorpayConfig } from "@/core/config/externalServices";
+import { ApiError } from "@/core/errors/apiError";
 
 export type CreatePaymentOrderInput = {
   amount: number;
   currency: string;
   receipt?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, string | number | null>;
 };
 
 export type CreatePaymentOrderResult = {
@@ -25,51 +26,56 @@ export type VerifyPaymentSignatureInput = {
   razorpaySignature: string;
 };
 
-function ensureRazorpayEnabled() {
+async function ensureRazorpayEnabled() {
+  const razorpayConfig = await getRazorpayConfig();
   if (!razorpayConfig.enabled || !razorpayConfig.keyId || !razorpayConfig.keySecret) {
     throw new ApiError(400, "Razorpay integration is not configured");
   }
+  return razorpayConfig;
 }
 
-function buildAuthHeader() {
+let razorpayClient: Razorpay | null = null;
+let razorpayClientKey: string | null = null;
+
+async function getRazorpayClient() {
+  const razorpayConfig = await getRazorpayConfig();
   if (!razorpayConfig.keyId || !razorpayConfig.keySecret) {
-    return "";
+    return null;
   }
-  return `Basic ${Buffer.from(
-    `${razorpayConfig.keyId}:${razorpayConfig.keySecret}`
-  ).toString("base64")}`;
+  const nextKey = `${razorpayConfig.keyId}:${razorpayConfig.keySecret}`;
+  if (!razorpayClient || razorpayClientKey !== nextKey) {
+    razorpayClient = new Razorpay({
+      key_id: razorpayConfig.keyId,
+      key_secret: razorpayConfig.keySecret,
+    });
+    razorpayClientKey = nextKey;
+  }
+  return razorpayClient;
 }
 
 export const PaymentService = {
   async createPaymentOrder(
     input: CreatePaymentOrderInput
   ): Promise<CreatePaymentOrderResult> {
-    ensureRazorpayEnabled();
+    await ensureRazorpayEnabled();
 
-    const response = await fetch("https://api.razorpay.com/v1/orders", {
-      method: "POST",
-      headers: {
-        Authorization: buildAuthHeader(),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        amount: input.amount,
-        currency: input.currency,
-        receipt: input.receipt,
-        notes: input.metadata,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new ApiError(502, "Failed to create Razorpay order");
+    const client = await getRazorpayClient();
+    if (!client) {
+      throw new ApiError(400, "Razorpay integration is not configured");
     }
 
-    const data = (await response.json()) as CreatePaymentOrderResult;
-    return data;
+    const order = await client.orders.create({
+      amount: input.amount,
+      currency: input.currency,
+      receipt: input.receipt,
+      notes: input.metadata,
+    });
+
+    return order as unknown as CreatePaymentOrderResult;
   },
 
-  verifyPaymentSignature(input: VerifyPaymentSignatureInput): boolean {
-    ensureRazorpayEnabled();
+  async verifyPaymentSignature(input: VerifyPaymentSignatureInput): Promise<boolean> {
+    const razorpayConfig = await ensureRazorpayEnabled();
 
     const payload = `${input.razorpayOrderId}|${input.razorpayPaymentId}`;
     const expected = crypto

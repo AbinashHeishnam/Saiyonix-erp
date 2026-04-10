@@ -1,20 +1,20 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
 import {
   createTeacherSubjectClass,
   deleteTeacherSubjectClass,
   getTeacherSubjectClassById,
   getTeacherSubjectClasses,
   updateTeacherSubjectClass,
-} from "./service";
+} from "@/modules/teacherSubjectClass/service";
 import {
   teacherSubjectClassIdSchema,
   type TeacherSubjectClassFilters,
-} from "./validation";
+} from "@/modules/teacherSubjectClass/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {
@@ -43,6 +43,8 @@ function parseFilters(query: AuthRequest["query"]): TeacherSubjectClassFilters {
     teacherId: typeof query.teacherId === "string" ? query.teacherId : undefined,
     classId: typeof query.classId === "string" ? query.classId : undefined,
     sectionId: typeof query.sectionId === "string" ? query.sectionId : undefined,
+    academicYearId:
+      typeof query.academicYearId === "string" ? query.academicYearId : undefined,
   };
 }
 

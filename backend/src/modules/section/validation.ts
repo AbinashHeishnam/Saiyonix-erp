@@ -1,6 +1,13 @@
 import { z } from "zod";
 
+import { paginationQuerySchema } from "@/utils/pagination";
+
 export const sectionIdSchema = z.string().uuid();
+export const sectionIdParamSchema = z.object({ id: sectionIdSchema }).strict();
+export const listSectionQuerySchema = paginationQuerySchema.extend({
+  academicYearId: z.string().uuid().optional(),
+  classId: z.string().uuid().optional(),
+});
 
 export const createSectionSchema = z.object({
   classId: z.string().uuid(),

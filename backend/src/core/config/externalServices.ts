@@ -1,5 +1,5 @@
-import { env } from "../../config/env";
-import { logger } from "../../utils/logger";
+import { env } from "@/config/env";
+import { getConfigs } from "@/core/services/appConfig.service";
 
 export type SmsProviderName = "twilio" | "msg91" | string;
 
@@ -27,20 +27,45 @@ export type StorageConfig = {
   enabled: boolean;
 };
 
-const smsApiKey = env.SMS_API_KEY ?? env.SMS_PROVIDER_KEY;
+const CONFIG_KEYS = [
+  "RAZORPAY_KEY_ID",
+  "RAZORPAY_KEY_SECRET",
+  "SMS_API_KEY",
+  "SMS_SENDER_ID",
+  "OTP_PROVIDER",
+  "OTP_API_KEY",
+] as const;
 
-export const smsConfig: SmsConfig = {
-  provider: env.SMS_PROVIDER,
-  apiKey: smsApiKey,
-  senderId: env.SMS_SENDER_ID,
-  enabled: Boolean(env.SMS_PROVIDER && smsApiKey),
-};
+export async function getSmsConfig(
+  context: "default" | "otp" = "default"
+): Promise<SmsConfig> {
+  const config = await getConfigs([...CONFIG_KEYS]);
+  const provider = config.OTP_PROVIDER ?? undefined;
+  const smsApiKey = config.SMS_API_KEY ?? null;
+  const otpApiKey = config.OTP_API_KEY ?? null;
+  const apiKey =
+    context === "otp" ? otpApiKey ?? smsApiKey : smsApiKey ?? otpApiKey;
+  const senderId = config.SMS_SENDER_ID ?? undefined;
+  const enabled = Boolean(provider && apiKey && senderId);
 
-export const razorpayConfig: RazorpayConfig = {
-  keyId: env.RAZORPAY_KEY_ID,
-  keySecret: env.RAZORPAY_KEY_SECRET,
-  enabled: Boolean(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET),
-};
+  return {
+    provider,
+    apiKey: apiKey ?? undefined,
+    senderId,
+    enabled,
+  };
+}
+
+export async function getRazorpayConfig(): Promise<RazorpayConfig> {
+  const config = await getConfigs([...CONFIG_KEYS]);
+  const keyId = config.RAZORPAY_KEY_ID?.trim() || undefined;
+  const keySecret = config.RAZORPAY_KEY_SECRET?.trim() || undefined;
+  return {
+    keyId,
+    keySecret,
+    enabled: Boolean(keyId && keySecret),
+  };
+}
 
 export const storageConfig: StorageConfig = {
   provider: env.STORAGE_PROVIDER,
@@ -55,15 +80,3 @@ export const storageConfig: StorageConfig = {
       env.STORAGE_SECRET_KEY
   ),
 };
-
-if (!smsConfig.enabled) {
-  logger.info("SMS provider disabled");
-}
-
-if (!razorpayConfig.enabled) {
-  logger.info("Razorpay provider disabled");
-}
-
-if (!storageConfig.enabled) {
-  logger.info("Storage provider disabled; using local disk storage");
-}

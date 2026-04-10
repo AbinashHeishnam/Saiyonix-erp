@@ -1,6 +1,9 @@
 import { z } from "zod";
 
+import { paginationQuerySchema } from "@/utils/pagination";
+
 export const circularIdSchema = z.string().cuid();
+export const circularIdParamSchema = z.object({ id: circularIdSchema }).strict();
 
 const targetTypeSchema = z.enum(["ALL", "CLASS", "SECTION", "ROLE"]);
 const targetRoleSchema = z.enum([
@@ -79,3 +82,10 @@ export const updateCircularSchema = baseCircularSchema
 
 export type CreateCircularInput = z.infer<typeof createCircularSchema>;
 export type UpdateCircularInput = z.infer<typeof updateCircularSchema>;
+export const listCircularQuerySchema = paginationQuerySchema
+  .extend({
+    classId: z.string().uuid().optional(),
+    sectionId: z.string().uuid().optional(),
+    roleType: targetRoleSchema.optional(),
+  })
+  .strict();

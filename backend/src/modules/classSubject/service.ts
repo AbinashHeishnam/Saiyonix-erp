@@ -1,9 +1,9 @@
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
 import type {
   CreateClassSubjectInput,
   UpdateClassSubjectInput,
-} from "./validation";
+} from "@/modules/classSubject/validation";
 
 async function ensureClassBelongsToSchool(schoolId: string, classId: string) {
   const classRecord = await prisma.class.findFirst({

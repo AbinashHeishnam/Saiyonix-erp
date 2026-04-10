@@ -1,8 +1,8 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../db/prisma";
-import { sendPush } from "../push/pushProvider";
-import { logger } from "../../utils/logger";
+import prisma from "@/core/db/prisma";
+import { sendPush } from "@/core/push/pushProvider";
+import { logger } from "@/utils/logger";
 
 type PushJobPayload = {
   type: "PUSH";

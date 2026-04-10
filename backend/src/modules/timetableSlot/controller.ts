@@ -1,17 +1,17 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
 import {
   createTimetableSlot,
   deleteTimetableSlot,
   getTimetableSlotById,
   listTimetableSlots,
   updateTimetableSlot,
-} from "./service";
-import { timetableSlotIdSchema } from "./validation";
+} from "@/modules/timetableSlot/service";
+import { timetableSlotIdSchema } from "@/modules/timetableSlot/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {

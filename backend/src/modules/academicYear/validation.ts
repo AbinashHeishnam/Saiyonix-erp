@@ -1,6 +1,10 @@
 import { z } from "zod";
 
+import { paginationQuerySchema } from "@/utils/pagination";
+
 export const academicYearIdSchema = z.string().uuid();
+export const academicYearIdParamSchema = z.object({ id: academicYearIdSchema }).strict();
+export const listAcademicYearQuerySchema = paginationQuerySchema;
 
 export const createAcademicYearSchema = z
   .object({
@@ -9,11 +13,20 @@ export const createAcademicYearSchema = z
     endDate: z.coerce.date(),
     isActive: z.boolean().optional(),
     isLocked: z.boolean().optional(),
+    cloneFromAcademicYearId: z.string().uuid().optional(),
+    cloneFromPrevious: z.boolean().optional(),
   })
   .refine((data) => data.startDate <= data.endDate, {
     message: "startDate must be before or equal to endDate",
     path: ["startDate"],
-  });
+  })
+  .refine(
+    (data) => !(data.cloneFromAcademicYearId && data.cloneFromPrevious),
+    {
+      message: "Provide either cloneFromAcademicYearId or cloneFromPrevious, not both",
+      path: ["cloneFromAcademicYearId"],
+    }
+  );
 
 export const updateAcademicYearSchema = z
   .object({
@@ -40,5 +53,14 @@ export const updateAcademicYearSchema = z
     }
   );
 
+export const switchAcademicYearSchema = z
+  .object({
+    fromAcademicYearId: z.string().uuid().optional(),
+    toAcademicYearId: z.string().uuid(),
+    resetOperationalData: z.boolean().optional(),
+  })
+  .strict();
+
 export type CreateAcademicYearInput = z.infer<typeof createAcademicYearSchema>;
 export type UpdateAcademicYearInput = z.infer<typeof updateAcademicYearSchema>;
+export type SwitchAcademicYearInput = z.infer<typeof switchAcademicYearSchema>;

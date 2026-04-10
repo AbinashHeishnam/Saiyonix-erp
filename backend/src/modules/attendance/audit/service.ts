@@ -1,7 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
-import prisma from "../../../core/db/prisma";
-import { ApiError } from "../../../core/errors/apiError";
+import prisma from "@/core/db/prisma";
 
 export type AttendanceAuditFilters = {
   attendanceId?: string;
@@ -13,10 +12,6 @@ export async function listAttendanceAuditLogs(
   filters: AttendanceAuditFilters,
   pagination?: { skip: number; take: number }
 ): Promise<{ items: Prisma.AttendanceAuditLogGetPayload<{}>[]; total: number }> {
-  if (!filters.attendanceId && !filters.studentId) {
-    throw new ApiError(400, "attendanceId or studentId is required");
-  }
-
   const where: Prisma.AttendanceAuditLogWhereInput = {
     attendance: {
       ...(filters.attendanceId ? { id: filters.attendanceId } : {}),

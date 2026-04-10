@@ -1,0 +1,82 @@
+import { Router } from "express";
+
+import { authMiddleware } from "@/middleware/auth.middleware";
+import { allowRoles } from "@/middleware/rbac.middleware";
+import { requirePermission } from "@/middleware/permission.middleware";
+import { validate } from "@/middleware/validate.middleware";
+import { uploadSingle } from "@/middleware/upload.middleware";
+import {
+  adminGetParentProfile,
+  adminListParents,
+  adminUpdateParentProfile,
+  getParentProfile,
+  uploadParentStudentPhoto,
+  updateParentProfile,
+  getParentChildIdCard,
+} from "@/modules/parent/controller";
+import { updateParentProfileSchema } from "@/modules/parent/validation";
+import { studentIdParamSchema } from "@/modules/student/validation";
+
+const parentRouter = Router();
+
+parentRouter.get(
+  "/child/id-card",
+  authMiddleware,
+  allowRoles("PARENT"),
+  requirePermission("notice:read"),
+  getParentChildIdCard
+);
+
+parentRouter.get(
+  "/profile",
+  authMiddleware,
+  allowRoles("PARENT"),
+  requirePermission("notice:read"),
+  getParentProfile
+);
+
+parentRouter.get(
+  "/",
+  authMiddleware,
+  allowRoles("ADMIN", "SUPER_ADMIN", "ACADEMIC_SUB_ADMIN"),
+  requirePermission("notice:read"),
+  adminListParents
+);
+
+parentRouter.put(
+  "/profile",
+  authMiddleware,
+  allowRoles("PARENT"),
+  requirePermission("notice:read"),
+  validate(updateParentProfileSchema),
+  updateParentProfile
+);
+
+parentRouter.post(
+  "/student/:id/photo",
+  authMiddleware,
+  allowRoles("PARENT"),
+  requirePermission("notice:read"),
+  validate({ params: studentIdParamSchema }),
+  ...uploadSingle({ module: "profile-photo", userType: "student", userIdParam: "id", fieldName: "photo" }),
+  uploadParentStudentPhoto
+);
+
+parentRouter.get(
+  "/:id",
+  authMiddleware,
+  allowRoles("ADMIN", "SUPER_ADMIN"),
+  requirePermission("notice:read"),
+  adminGetParentProfile
+);
+
+parentRouter.put(
+  "/:id",
+  authMiddleware,
+  allowRoles("ADMIN", "SUPER_ADMIN"),
+  requirePermission("notice:read"),
+  validate(updateParentProfileSchema),
+  adminUpdateParentProfile
+);
+
+export default parentRouter;

@@ -1,17 +1,21 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
 import {
   createAcademicYear,
   deleteAcademicYear,
+  getAcademicYearTransitionMeta,
+  getActiveAcademicYear,
+  getPreviousAcademicYear,
   getAcademicYearById,
   listAcademicYears,
+  switchAcademicYear,
   updateAcademicYear,
-} from "./service";
-import { academicYearIdSchema } from "./validation";
+} from "@/modules/academicYear/service";
+import { academicYearIdSchema, switchAcademicYearSchema } from "@/modules/academicYear/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {
@@ -90,6 +94,50 @@ export async function remove(req: AuthRequest, res: Response, next: NextFunction
     const id = parseId(req.params.id);
     const data = await deleteAcademicYear(schoolId, id);
     return success(res, data, "Academic year deleted successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function switchYear(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    const parsed = switchAcademicYearSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new ApiError(400, "Invalid switch payload");
+    }
+    const data = await switchAcademicYear(schoolId, parsed.data, req.user?.sub);
+    return success(res, data, "Academic year switched successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getActive(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    const data = await getActiveAcademicYear(schoolId);
+    return success(res, data, "Active academic year fetched successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getPrevious(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    const data = await getPreviousAcademicYear(schoolId);
+    return success(res, data, "Previous academic year fetched successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function transitionMeta(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    const data = await getAcademicYearTransitionMeta(schoolId);
+    return success(res, data, "Academic year transition metadata fetched successfully");
   } catch (error) {
     return next(error);
   }

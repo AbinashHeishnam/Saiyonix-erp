@@ -6,18 +6,19 @@ import { authMiddleware } from "../../../middleware/auth.middleware";
 import { requirePermission } from "../../../middleware/permission.middleware";
 import { allowRoles } from "../../../middleware/rbac.middleware";
 import { validate } from "../../../middleware/validate.middleware";
-import { ApiError } from "../../../core/errors/apiError";
-import { success } from "../../../utils/apiResponse";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
 import {
   approveAttendanceCorrection,
   rejectAttendanceCorrection,
   requestAttendanceCorrection,
-} from "./service";
+} from "@/modules/attendance/corrections/service";
 import {
   attendanceCorrectionIdSchema,
+  attendanceCorrectionIdParamSchema,
   createCorrectionRequestSchema,
   reviewCorrectionSchema,
-} from "./validation";
+} from "@/modules/attendance/corrections/validation";
 
 const correctionsRouter = Router();
 
@@ -71,7 +72,7 @@ correctionsRouter.post(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("attendance:update"),
-  validate(reviewCorrectionSchema),
+  validate({ params: attendanceCorrectionIdParamSchema, body: reviewCorrectionSchema }),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const schoolId = getSchoolId(req);
@@ -94,7 +95,7 @@ correctionsRouter.post(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("attendance:update"),
-  validate(reviewCorrectionSchema),
+  validate({ params: attendanceCorrectionIdParamSchema, body: reviewCorrectionSchema }),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const schoolId = getSchoolId(req);

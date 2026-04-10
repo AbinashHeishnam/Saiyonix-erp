@@ -1,7 +1,7 @@
 import { PutObjectCommand, DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
-import type { StorageConfig } from "../../../config/externalServices";
-import type { StorageUploadPayload, StorageUploadResult } from "./s3.provider";
+import type { StorageConfig } from "@/core/config/externalServices";
+import type { StorageUploadPayload, StorageUploadResult } from "@/core/services/storage/providers/s3.provider";
 
 function buildFileKey(payload: StorageUploadPayload) {
   const safeName = payload.fileName.replace(/\s+/g, "-");

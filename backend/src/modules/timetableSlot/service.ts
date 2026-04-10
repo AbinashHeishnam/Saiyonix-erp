@@ -1,22 +1,34 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import type { CreateTimetableSlotInput, UpdateTimetableSlotInput } from "./validation";
+import prisma from "@/core/db/prisma";
+import { trigger } from "@/modules/notification/service";
+import { collectClassRecipients } from "@/modules/notification/recipientUtils";
+import { ApiError } from "@/core/errors/apiError";
+import { safeRedisDel } from "@/core/cache/invalidate";
+import { toLocalDateOnly } from "@/core/utils/localDate";
+import type { CreateTimetableSlotInput, UpdateTimetableSlotInput } from "@/modules/timetableSlot/validation";
 
 type ClassSubjectLookup = {
   classId: string;
   academicYearId: string;
 };
 
-type DbClient = Prisma.TransactionClient | typeof prisma;
+const prismaClient = prisma;
+
+type DbClient = typeof prisma;
 type TimetableEntry = {
   dayOfWeek: string;
   periodNumber: number;
+  periodStartTime?: string | null;
+  periodEndTime?: string | null;
   subjectName: string;
   className: string;
   sectionName: string;
   teacherName: string | null;
+  isSubstitution?: boolean;
+  originalTeacherId?: string | null;
+  originalTeacherName?: string | null;
+  label?: string | null;
 };
 
 const DAY_OF_WEEK_NAMES = [
@@ -76,6 +88,17 @@ async function ensureTeacherBelongsToSchool(
   }
 }
 
+async function getActiveAcademicYearId(client: DbClient, schoolId: string) {
+  const academicYear = await client.academicYear.findFirst({
+    where: { schoolId, isActive: true },
+    select: { id: true },
+  });
+  if (!academicYear) {
+    throw new ApiError(400, "Active academic year not found");
+  }
+  return academicYear.id;
+}
+
 async function ensurePeriodBelongsToSchool(
   client: DbClient,
   schoolId: string,
@@ -102,14 +125,17 @@ async function ensureSectionBelongsToSchool(
       deletedAt: null,
       class: { schoolId, deletedAt: null },
     },
-    select: { id: true, classId: true },
+    select: { id: true, classId: true, class: { select: { academicYearId: true } } },
   });
 
   if (!section) {
     throw new ApiError(400, "Section not found for this school");
   }
 
-  return section;
+  return {
+    ...section,
+    academicYearId: section.class.academicYearId,
+  };
 }
 
 async function ensureClassBelongsToSchool(
@@ -127,6 +153,23 @@ async function ensureClassBelongsToSchool(
   }
 
   return classRecord;
+}
+
+async function resolveEffectiveFrom(
+  client: DbClient,
+  schoolId: string,
+  effectiveFrom: string
+) {
+  const school = await client.school.findUnique({
+    where: { id: schoolId },
+    select: { timezone: true },
+  });
+  const timeZone = school?.timezone ?? "Asia/Kolkata";
+  const parsed = new Date(effectiveFrom);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new ApiError(400, "Invalid effectiveFrom date");
+  }
+  return toLocalDateOnly(parsed, timeZone);
 }
 
 async function ensureClassSubjectBelongsToSchool(
@@ -164,6 +207,7 @@ async function ensurePeriodLimitForDay(
     sectionId: string;
     classId: string;
     dayOfWeek: number;
+    effectiveFrom: Date;
     excludeId?: string;
   }
 ) {
@@ -193,6 +237,7 @@ async function ensurePeriodLimitForDay(
     where: {
       sectionId: params.sectionId,
       dayOfWeek: params.dayOfWeek,
+      effectiveFrom: params.effectiveFrom,
       ...(params.excludeId ? { NOT: { id: params.excludeId } } : {}),
     },
   });
@@ -257,6 +302,7 @@ async function ensureNoSectionConflict(
   sectionId: string;
   dayOfWeek: number;
   periodId: string;
+  effectiveFrom: Date;
   excludeId?: string;
 }) {
   const existing = await client.timetableSlot.findFirst({
@@ -264,6 +310,7 @@ async function ensureNoSectionConflict(
       sectionId: params.sectionId,
       dayOfWeek: params.dayOfWeek,
       periodId: params.periodId,
+      effectiveFrom: params.effectiveFrom,
       ...(params.excludeId ? { NOT: { id: params.excludeId } } : {}),
     },
     select: { id: true },
@@ -281,6 +328,7 @@ async function ensureNoTeacherConflict(
   academicYearId: string;
   dayOfWeek: number;
   periodId: string;
+  effectiveFrom: Date;
   excludeId?: string;
 }) {
   const existing = await client.timetableSlot.findFirst({
@@ -289,6 +337,7 @@ async function ensureNoTeacherConflict(
       academicYearId: params.academicYearId,
       dayOfWeek: params.dayOfWeek,
       periodId: params.periodId,
+      effectiveFrom: params.effectiveFrom,
       ...(params.excludeId ? { NOT: { id: params.excludeId } } : {}),
     },
     select: { id: true },
@@ -338,7 +387,7 @@ function mapDayOfWeek(dayOfWeek: number) {
 
 function toTimetableEntry(slot: {
   dayOfWeek: number;
-  period: { periodNumber: number };
+  period: { periodNumber: number; startTime?: Date | null; endTime?: Date | null };
   classSubject: { subject: { name: string } };
   section: { sectionName: string; class: { className: string } };
   teacher: { fullName: string } | null;
@@ -346,6 +395,12 @@ function toTimetableEntry(slot: {
   return {
     dayOfWeek: mapDayOfWeek(slot.dayOfWeek),
     periodNumber: slot.period.periodNumber,
+    periodStartTime: slot.period?.startTime
+      ? slot.period.startTime.toISOString().split("T")[1]?.slice(0, 5)
+      : null,
+    periodEndTime: slot.period?.endTime
+      ? slot.period.endTime.toISOString().split("T")[1]?.slice(0, 5)
+      : null,
     subjectName: slot.classSubject.subject.name,
     className: slot.section.class.className,
     sectionName: slot.section.sectionName,
@@ -353,34 +408,87 @@ function toTimetableEntry(slot: {
   };
 }
 
+async function invalidateTimetableCaches(params: {
+  sectionIds: Array<string | null | undefined>;
+  teacherIds: Array<string | null | undefined>;
+  academicYearId?: string | null;
+}) {
+  try {
+    const sectionIds = Array.from(
+      new Set(params.sectionIds.filter((id): id is string => Boolean(id)))
+    );
+    const teacherIds = Array.from(
+      new Set(params.teacherIds.filter((id): id is string => Boolean(id)))
+    );
+    const keys: string[] = [];
+
+    sectionIds.forEach((id) => keys.push(`timetable:section:${id}`));
+    teacherIds.forEach((id) => {
+      keys.push(`timetable:teacher:${id}`);
+      if (params.academicYearId) {
+        keys.push(`timetable:teacher:${id}:${params.academicYearId}`);
+      }
+      keys.push(`dashboard:teacher:${id}`);
+    });
+
+    if (sectionIds.length) {
+      try {
+        const enrollments = await prisma.studentEnrollment.findMany({
+          where: { sectionId: { in: sectionIds } },
+          select: { studentId: true },
+        });
+        enrollments.forEach((item) => {
+          keys.push(`timetable:student:${item.studentId}`);
+          keys.push(`dashboard:student:${item.studentId}`);
+        });
+      } catch (err) {
+        console.error("[CACHE] timetable student lookup failed", err);
+      }
+    }
+
+    if (keys.length) {
+      await safeRedisDel(keys);
+    }
+  } catch (err) {
+    console.error("[CACHE] timetable invalidation failed", err);
+  }
+}
+
 export async function createTimetableSlot(
   schoolId: string,
   payload: CreateTimetableSlotInput
 ) {
   try {
-    return await prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async (tx) => {
+      const db = tx as DbClient;
       const section = await ensureSectionBelongsToSchool(
-        tx,
+        db,
         schoolId,
         payload.sectionId
       );
       const classSubject = await ensureClassSubjectBelongsToSchool(
-        tx,
+        db,
         schoolId,
         payload.classSubjectId
       );
-      await ensureAcademicYearBelongsToSchool(tx, schoolId, payload.academicYearId);
-      await ensurePeriodBelongsToSchool(tx, schoolId, payload.periodId);
+      await ensureAcademicYearBelongsToSchool(db, schoolId, payload.academicYearId);
+      await ensurePeriodBelongsToSchool(db, schoolId, payload.periodId);
 
-      await ensureSectionMatchesClass(tx, payload.sectionId, classSubject.classId);
+      await ensureSectionMatchesClass(db, payload.sectionId, classSubject.classId);
 
       if (classSubject.academicYearId !== payload.academicYearId) {
         throw new ApiError(400, "Class subject does not belong to this academic year");
       }
 
+      const effectiveFrom = await resolveEffectiveFrom(
+        db,
+        schoolId,
+        payload.effectiveFrom
+      );
+
       if (payload.teacherId) {
-        await ensureTeacherBelongsToSchool(tx, schoolId, payload.teacherId);
-        await ensureTeacherAssignmentExists(tx, {
+        await ensureTeacherBelongsToSchool(db, schoolId, payload.teacherId);
+        await ensureTeacherAssignmentExists(db, {
           schoolId,
           teacherId: payload.teacherId,
           classSubjectId: payload.classSubjectId,
@@ -389,25 +497,28 @@ export async function createTimetableSlot(
         });
       }
 
-      await ensurePeriodLimitForDay(tx, {
+      await ensurePeriodLimitForDay(db, {
         schoolId,
         sectionId: payload.sectionId,
         classId: section.classId,
         dayOfWeek: payload.dayOfWeek,
+        effectiveFrom,
       });
 
-      await ensureNoSectionConflict(tx, {
+      await ensureNoSectionConflict(db, {
         sectionId: payload.sectionId,
         dayOfWeek: payload.dayOfWeek,
         periodId: payload.periodId,
+        effectiveFrom,
       });
 
       if (payload.teacherId) {
-        await ensureNoTeacherConflict(tx, {
+        await ensureNoTeacherConflict(db, {
           teacherId: payload.teacherId,
           academicYearId: payload.academicYearId,
           dayOfWeek: payload.dayOfWeek,
           periodId: payload.periodId,
+          effectiveFrom,
         });
       }
 
@@ -419,6 +530,7 @@ export async function createTimetableSlot(
           academicYearId: payload.academicYearId,
           dayOfWeek: payload.dayOfWeek,
           periodId: payload.periodId,
+          effectiveFrom,
           roomNo: payload.roomNo,
         },
         include: {
@@ -430,6 +542,52 @@ export async function createTimetableSlot(
         },
       });
     });
+    try {
+      await invalidateTimetableCaches({
+        sectionIds: [created.sectionId],
+        teacherIds: [created.teacherId],
+        academicYearId: created.academicYearId,
+      });
+    } catch {
+      // ignore cache failures
+    }
+    try {
+      const recipients = new Set<string>();
+      const classRecipients = await collectClassRecipients({
+        schoolId,
+        classId: created.classSubject.classId,
+        sectionId: created.sectionId,
+      });
+      classRecipients.forEach((id) => recipients.add(id));
+      if (created.teacher?.userId) recipients.add(created.teacher.userId);
+
+      if (recipients.size) {
+        const effectiveLabel = created.effectiveFrom
+          ? new Date(created.effectiveFrom).toLocaleDateString("en-IN")
+          : null;
+        await trigger("TIMETABLE_UPDATED", {
+          schoolId,
+          classId: created.classSubject.classId,
+          className: created.classSubject.class?.className,
+          sectionId: created.sectionId,
+          sectionName: created.section?.sectionName ?? undefined,
+          subjectName: created.classSubject.subject?.name,
+          userIds: Array.from(recipients),
+          message: effectiveLabel
+            ? `The timetable has been updated for ${created.classSubject.class?.className ?? "your class"} effective ${effectiveLabel}.`
+            : undefined,
+          metadata: {
+            timetableSlotId: created.id,
+            effectiveFrom: created.effectiveFrom?.toISOString?.() ?? null,
+          },
+        });
+      }
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.error("[notify] timetable update failed", error);
+      }
+    }
+    return created;
   } catch (error) {
     mapPrismaError(error);
   }
@@ -470,7 +628,7 @@ export async function listTimetableSlots(
 }
 
 export async function getTimetableSlotById(schoolId: string, id: string) {
-  return getTimetableSlotByIdWithClient(prisma, schoolId, id);
+  return getTimetableSlotByIdWithClient(prismaClient, schoolId, id);
 }
 
 export async function updateTimetableSlot(
@@ -479,8 +637,13 @@ export async function updateTimetableSlot(
   payload: UpdateTimetableSlotInput
 ) {
   try {
-    return await prisma.$transaction(async (tx) => {
-      const existing = await getTimetableSlotByIdWithClient(tx, schoolId, id);
+    let previousSectionId: string | null = null;
+    let previousTeacherId: string | null = null;
+    const updated = await prisma.$transaction(async (tx) => {
+      const db = tx as DbClient;
+      const existing = await getTimetableSlotByIdWithClient(db, schoolId, id);
+      previousSectionId = existing.sectionId;
+      previousTeacherId = existing.teacherId ?? null;
 
       const sectionId = payload.sectionId ?? existing.sectionId;
       const classSubjectId = payload.classSubjectId ?? existing.classSubjectId;
@@ -488,25 +651,28 @@ export async function updateTimetableSlot(
       const academicYearId = payload.academicYearId ?? existing.academicYearId;
       const dayOfWeek = payload.dayOfWeek ?? existing.dayOfWeek;
       const periodId = payload.periodId ?? existing.periodId;
+      const effectiveFrom = payload.effectiveFrom
+        ? await resolveEffectiveFrom(db, schoolId, payload.effectiveFrom)
+        : existing.effectiveFrom;
 
-      const section = await ensureSectionBelongsToSchool(tx, schoolId, sectionId);
+      const section = await ensureSectionBelongsToSchool(db, schoolId, sectionId);
       const classSubject = await ensureClassSubjectBelongsToSchool(
-        tx,
+        db,
         schoolId,
         classSubjectId
       );
-      await ensureAcademicYearBelongsToSchool(tx, schoolId, academicYearId);
-      await ensurePeriodBelongsToSchool(tx, schoolId, periodId);
+      await ensureAcademicYearBelongsToSchool(db, schoolId, academicYearId);
+      await ensurePeriodBelongsToSchool(db, schoolId, periodId);
 
-      await ensureSectionMatchesClass(tx, sectionId, classSubject.classId);
+      await ensureSectionMatchesClass(db, sectionId, classSubject.classId);
 
       if (classSubject.academicYearId !== academicYearId) {
         throw new ApiError(400, "Class subject does not belong to this academic year");
       }
 
       if (teacherId) {
-        await ensureTeacherBelongsToSchool(tx, schoolId, teacherId);
-        await ensureTeacherAssignmentExists(tx, {
+        await ensureTeacherBelongsToSchool(db, schoolId, teacherId);
+        await ensureTeacherAssignmentExists(db, {
           schoolId,
           teacherId,
           classSubjectId,
@@ -515,27 +681,30 @@ export async function updateTimetableSlot(
         });
       }
 
-      await ensurePeriodLimitForDay(tx, {
+      await ensurePeriodLimitForDay(db, {
         schoolId,
         sectionId,
         classId: section.classId,
         dayOfWeek,
+        effectiveFrom,
         excludeId: existing.id,
       });
 
-      await ensureNoSectionConflict(tx, {
+      await ensureNoSectionConflict(db, {
         sectionId,
         dayOfWeek,
         periodId,
+        effectiveFrom,
         excludeId: id,
       });
 
       if (teacherId) {
-        await ensureNoTeacherConflict(tx, {
+        await ensureNoTeacherConflict(db, {
           teacherId,
           academicYearId,
           dayOfWeek,
           periodId,
+          effectiveFrom,
           excludeId: id,
         });
       }
@@ -553,6 +722,9 @@ export async function updateTimetableSlot(
             : {}),
           ...(payload.dayOfWeek !== undefined ? { dayOfWeek: payload.dayOfWeek } : {}),
           ...(payload.periodId !== undefined ? { periodId: payload.periodId } : {}),
+          ...(payload.effectiveFrom !== undefined
+            ? { effectiveFrom }
+            : {}),
           ...(payload.roomNo !== undefined ? { roomNo: payload.roomNo } : {}),
         },
         include: {
@@ -564,13 +736,23 @@ export async function updateTimetableSlot(
         },
       });
     });
+    try {
+      await invalidateTimetableCaches({
+        sectionIds: [previousSectionId, updated.sectionId],
+        teacherIds: [previousTeacherId, updated.teacherId],
+        academicYearId: updated.academicYearId,
+      });
+    } catch {
+      // ignore cache failures
+    }
+    return updated;
   } catch (error) {
     mapPrismaError(error);
   }
 }
 
 export async function deleteTimetableSlot(schoolId: string, id: string) {
-  await getTimetableSlotById(schoolId, id);
+  const existing = await getTimetableSlotById(schoolId, id);
 
   try {
     await prisma.timetableSlot.delete({
@@ -579,16 +761,45 @@ export async function deleteTimetableSlot(schoolId: string, id: string) {
   } catch (error) {
     mapPrismaError(error);
   }
+  try {
+    await invalidateTimetableCaches({
+      sectionIds: [existing.sectionId],
+      teacherIds: [existing.teacherId ?? null],
+      academicYearId: existing.academicYearId,
+    });
+  } catch {
+    // ignore cache failures
+  }
 
   return { id };
 }
 
 export async function listTimetableForSection(schoolId: string, sectionId: string) {
-  await ensureSectionBelongsToSchool(prisma, schoolId, sectionId);
+  const section = await ensureSectionBelongsToSchool(prismaClient, schoolId, sectionId);
+  const dateOnly = await resolveEffectiveFrom(
+    prisma,
+    schoolId,
+    new Date().toISOString()
+  );
+  const rows = await prisma.timetableSlot.groupBy({
+    by: ["sectionId"],
+    where: {
+      sectionId,
+      academicYearId: section.academicYearId,
+      effectiveFrom: { lte: dateOnly },
+    },
+    _max: { effectiveFrom: true },
+  });
+  const effectiveFrom = rows[0]?._max.effectiveFrom ?? null;
+  if (!effectiveFrom) {
+    return [];
+  }
 
   const slots = await prisma.timetableSlot.findMany({
     where: {
       sectionId,
+      academicYearId: section.academicYearId,
+      effectiveFrom,
       section: {
         deletedAt: null,
         class: { schoolId, deletedAt: null },
@@ -601,7 +812,7 @@ export async function listTimetableForSection(schoolId: string, sectionId: strin
     orderBy: [{ dayOfWeek: "asc" }, { period: { periodNumber: "asc" } }],
     select: {
       dayOfWeek: true,
-      period: { select: { periodNumber: true } },
+      period: { select: { periodNumber: true, startTime: true, endTime: true } },
       classSubject: { select: { subject: { select: { name: true } } } },
       section: {
         select: { sectionName: true, class: { select: { className: true } } },
@@ -613,7 +824,13 @@ export async function listTimetableForSection(schoolId: string, sectionId: strin
   return slots.map(toTimetableEntry);
 }
 
-export async function listTimetableForTeacher(schoolId: string, teacherId: string) {
+export async function listTimetableForTeacher(
+  schoolId: string,
+  teacherId: string,
+  academicYearId?: string
+) {
+  const resolvedAcademicYearId =
+    academicYearId ?? (await getActiveAcademicYearId(prismaClient, schoolId));
   const teacher = await prisma.teacher.findFirst({
     where: { id: teacherId, schoolId, deletedAt: null },
     select: { id: true },
@@ -623,9 +840,45 @@ export async function listTimetableForTeacher(schoolId: string, teacherId: strin
     throw new ApiError(404, "Teacher not found");
   }
 
+  const dateOnly = await resolveEffectiveFrom(
+    prisma,
+    schoolId,
+    new Date().toISOString()
+  );
+
+  const sectionRows = await prisma.timetableSlot.groupBy({
+    by: ["sectionId"],
+    where: {
+      teacherId,
+      academicYearId: resolvedAcademicYearId,
+      effectiveFrom: { lte: dateOnly },
+      section: {
+        deletedAt: null,
+        class: { schoolId, deletedAt: null },
+      },
+      classSubject: {
+        class: { schoolId, deletedAt: null },
+        subject: { schoolId },
+      },
+    },
+    _max: { effectiveFrom: true },
+  });
+
+  const effectiveMap = new Map<string, Date>();
+  const sectionIds: string[] = [];
+  sectionRows.forEach((row) => {
+    if (row.sectionId && row._max.effectiveFrom) {
+      effectiveMap.set(row.sectionId, row._max.effectiveFrom);
+      sectionIds.push(row.sectionId);
+    }
+  });
+
   const slots = await prisma.timetableSlot.findMany({
     where: {
       teacherId,
+      academicYearId: resolvedAcademicYearId,
+      sectionId: { in: sectionIds.length ? sectionIds : ["__none__"] },
+      effectiveFrom: { lte: dateOnly },
       section: {
         deletedAt: null,
         class: { schoolId, deletedAt: null },
@@ -638,16 +891,80 @@ export async function listTimetableForTeacher(schoolId: string, teacherId: strin
     orderBy: [{ dayOfWeek: "asc" }, { period: { periodNumber: "asc" } }],
     select: {
       dayOfWeek: true,
-      period: { select: { periodNumber: true } },
+      period: { select: { periodNumber: true, startTime: true, endTime: true } },
       classSubject: { select: { subject: { select: { name: true } } } },
       section: {
         select: { sectionName: true, class: { select: { className: true } } },
       },
       teacher: { select: { fullName: true } },
+      sectionId: true,
+      effectiveFrom: true,
     },
   });
 
-  return slots.map(toTimetableEntry);
+  const school = await prisma.school.findUnique({
+    where: { id: schoolId },
+    select: { timezone: true },
+  });
+  const timeZone = school?.timezone ?? "Asia/Kolkata";
+  const today = new Date();
+  const substitutionDate = toLocalDateOnly(today, timeZone);
+  const substitutions = await prisma.substitution.findMany({
+    where: {
+      substituteTeacherId: teacherId,
+      date: substitutionDate,
+      class: { schoolId, deletedAt: null, academicYearId: resolvedAcademicYearId },
+      section: { deletedAt: null },
+    },
+    select: {
+      absentTeacherId: true,
+      absentTeacher: { select: { id: true, fullName: true } },
+      timetableSlot: {
+        select: {
+          dayOfWeek: true,
+          period: { select: { periodNumber: true, startTime: true, endTime: true } },
+          classSubject: { select: { subject: { select: { name: true } } } },
+          section: {
+            select: { sectionName: true, class: { select: { className: true } } },
+          },
+        },
+      },
+    },
+  });
+
+  const entryKey = (entry: TimetableEntry) =>
+    `${entry.dayOfWeek}:${entry.periodNumber}:${entry.className}:${entry.sectionName}`;
+  const entryMap = new Map<string, TimetableEntry>();
+  slots
+    .filter((slot) => {
+      const maxEffective = effectiveMap.get(slot.sectionId);
+      return maxEffective ? slot.effectiveFrom.getTime() === maxEffective.getTime() : false;
+    })
+    .map(toTimetableEntry)
+    .forEach((entry) => {
+    entryMap.set(entryKey(entry), entry);
+  });
+  substitutions.forEach((sub) => {
+    const baseSlot = sub.timetableSlot;
+    if (!baseSlot) return;
+    const entry = toTimetableEntry({
+      dayOfWeek: baseSlot.dayOfWeek,
+      period: baseSlot.period,
+      classSubject: baseSlot.classSubject,
+      section: baseSlot.section,
+      teacher: { fullName: sub.absentTeacher?.fullName ?? "Teacher" },
+    });
+    const originalTeacherName = sub.absentTeacher?.fullName ?? "Teacher";
+    entryMap.set(entryKey(entry), {
+      ...entry,
+      isSubstitution: true,
+      originalTeacherId: sub.absentTeacherId ?? null,
+      originalTeacherName,
+      label: `Substitute for ${originalTeacherName}`,
+    });
+  });
+
+  return Array.from(entryMap.values());
 }
 
 export async function listTimetableForStudent(schoolId: string, studentId: string) {
@@ -676,10 +993,30 @@ export async function listTimetableForStudent(schoolId: string, studentId: strin
     throw new ApiError(404, "Student enrollment not found");
   }
 
+  const dateOnly = await resolveEffectiveFrom(
+    prisma,
+    schoolId,
+    new Date().toISOString()
+  );
+  const rows = await prisma.timetableSlot.groupBy({
+    by: ["sectionId"],
+    where: {
+      sectionId: enrollment.sectionId,
+      academicYearId: enrollment.academicYearId,
+      effectiveFrom: { lte: dateOnly },
+    },
+    _max: { effectiveFrom: true },
+  });
+  const effectiveFrom = rows[0]?._max.effectiveFrom ?? null;
+  if (!effectiveFrom) {
+    return [];
+  }
+
   const slots = await prisma.timetableSlot.findMany({
     where: {
       sectionId: enrollment.sectionId,
       academicYearId: enrollment.academicYearId,
+      effectiveFrom,
       section: {
         deletedAt: null,
         class: { schoolId, deletedAt: null },

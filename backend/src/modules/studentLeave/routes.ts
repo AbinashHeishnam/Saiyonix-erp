@@ -4,8 +4,12 @@ import { authMiddleware } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { validate } from "../../middleware/validate.middleware";
-import { approve, cancel, create, getById, list, reject, timeline } from "./controller";
-import { createStudentLeaveSchema } from "./validation";
+import { approve, cancel, create, getById, list, reject, timeline } from "@/modules/studentLeave/controller";
+import {
+  createStudentLeaveSchema,
+  listStudentLeaveQuerySchema,
+  studentLeaveIdParamSchema,
+} from "@/modules/studentLeave/validation";
 
 const studentLeaveRouter = Router();
 
@@ -30,6 +34,7 @@ studentLeaveRouter.get(
     "STUDENT"
   ),
   requirePermission("studentLeave:read"),
+  validate({ query: listStudentLeaveQuerySchema }),
   list
 );
 
@@ -45,6 +50,7 @@ studentLeaveRouter.get(
     "STUDENT"
   ),
   requirePermission("studentLeave:read"),
+  validate({ params: studentLeaveIdParamSchema }),
   timeline
 );
 
@@ -60,6 +66,7 @@ studentLeaveRouter.get(
     "STUDENT"
   ),
   requirePermission("studentLeave:read"),
+  validate({ params: studentLeaveIdParamSchema }),
   getById
 );
 
@@ -68,6 +75,7 @@ studentLeaveRouter.patch(
   authMiddleware,
   allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
   requirePermission("studentLeave:update"),
+  validate({ params: studentLeaveIdParamSchema }),
   approve
 );
 
@@ -76,6 +84,7 @@ studentLeaveRouter.patch(
   authMiddleware,
   allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
   requirePermission("studentLeave:update"),
+  validate({ params: studentLeaveIdParamSchema }),
   reject
 );
 
@@ -84,6 +93,7 @@ studentLeaveRouter.patch(
   authMiddleware,
   allowRoles("STUDENT", "PARENT"),
   requirePermission("studentLeave:update"),
+  validate({ params: studentLeaveIdParamSchema }),
   cancel
 );
 

@@ -1,9 +1,9 @@
-import fs from "fs/promises";
 import path from "path";
 import AdmZip from "adm-zip";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { uploadFile } from "@/core/storage/storage.service";
 
 type BulkPhotoError = {
   filename: string;
@@ -24,14 +24,6 @@ const MAX_ZIP_BYTES = 25 * 1024 * 1024;
 
 function sanitizeEntryName(entryName: string) {
   return path.basename(entryName);
-}
-
-function resolveUploadPath(kind: "students" | "teachers", id: string) {
-  return path.join("uploads", kind, `${id}.jpg`);
-}
-
-async function ensureUploadDirExists(dirPath: string) {
-  await fs.mkdir(dirPath, { recursive: true });
 }
 
 export async function processBulkPhotoZip(
@@ -81,12 +73,6 @@ export async function processBulkPhotoZip(
     errors: [],
   };
 
-  const studentDir = path.join("uploads", "students");
-  const teacherDir = path.join("uploads", "teachers");
-
-  await ensureUploadDirExists(studentDir);
-  await ensureUploadDirExists(teacherDir);
-
   for (const entry of entries) {
     const filename = sanitizeEntryName(entry.entryName);
     const { name: fileId, ext } = path.parse(filename);
@@ -111,14 +97,21 @@ export async function processBulkPhotoZip(
     }
 
     const fileData = entry.getData();
+    const safeFileName = `${fileId}${normalizedExt}`;
 
     if (studentSet.has(fileId)) {
-      const relativePath = resolveUploadPath("students", fileId);
-      await fs.writeFile(relativePath, fileData);
+      const uploaded = await uploadFile(fileData, {
+        userType: "student",
+        userId: fileId,
+        module: "profile-photo",
+        fileName: safeFileName,
+        mimeType: "image/jpeg",
+        size: fileData.length,
+      });
       await prisma.studentProfile.upsert({
         where: { studentId: fileId },
-        update: { profilePhotoUrl: `/${relativePath}` },
-        create: { studentId: fileId, profilePhotoUrl: `/${relativePath}` },
+        update: { profilePhotoUrl: uploaded.fileUrl },
+        create: { studentId: fileId, profilePhotoUrl: uploaded.fileUrl },
       });
       result.studentUpdated += 1;
       result.processed += 1;
@@ -126,11 +119,17 @@ export async function processBulkPhotoZip(
     }
 
     if (teacherSet.has(fileId)) {
-      const relativePath = resolveUploadPath("teachers", fileId);
-      await fs.writeFile(relativePath, fileData);
+      const uploaded = await uploadFile(fileData, {
+        userType: "teacher",
+        userId: fileId,
+        module: "profile-photo",
+        fileName: safeFileName,
+        mimeType: "image/jpeg",
+        size: fileData.length,
+      });
       await prisma.teacher.update({
         where: { id: fileId, schoolId },
-        data: { photoUrl: `/${relativePath}` },
+        data: { photoUrl: uploaded.fileUrl },
       });
       result.teacherUpdated += 1;
       result.processed += 1;

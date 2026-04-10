@@ -1,18 +1,18 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
-import { listTimetableForSection } from "../timetableSlot/service";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
+import { listTimetableForSection } from "@/modules/timetableSlot/service";
 import {
   createSection,
   deleteSection,
   getSectionById,
   listSections,
   updateSection,
-} from "./service";
-import { sectionIdSchema } from "./validation";
+} from "@/modules/section/service";
+import { sectionIdSchema } from "@/modules/section/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {
@@ -50,7 +50,10 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
   try {
     const schoolId = getSchoolId(req);
     const pagination = parsePagination(req.query);
-    const { items, total } = await listSections(schoolId, pagination);
+    const academicYearId =
+      typeof req.query.academicYearId === "string" ? req.query.academicYearId : undefined;
+    const classId = typeof req.query.classId === "string" ? req.query.classId : undefined;
+    const { items, total } = await listSections(schoolId, { academicYearId, classId }, pagination);
     return success(
       res,
       items,

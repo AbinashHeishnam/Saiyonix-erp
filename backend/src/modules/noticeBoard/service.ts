@@ -1,9 +1,10 @@
-import type { NoticeBoard, Prisma } from "@prisma/client";
+import { Prisma, type NoticeBoard, type UserRole } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import { logAudit } from "../../utils/audit";
-import type { CreateNoticeInput, UpdateNoticeInput } from "./validation";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { logAudit } from "@/utils/audit";
+import { trigger as triggerNotification } from "@/modules/notification/service";
+import type { CreateNoticeInput, UpdateNoticeInput } from "@/modules/noticeBoard/validation";
 
 type NoticeFilters = {
   noticeType?: string;
@@ -12,6 +13,148 @@ type NoticeFilters = {
   sectionId?: string;
   roleType?: string;
 };
+
+type NoticeActor = {
+  userId: string;
+  roleType: string;
+};
+
+function toSecureFileUrl(value?: string | null) {
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith("/api/v1/files/secure")) return value;
+  return `/api/v1/files/secure?fileUrl=${encodeURIComponent(value)}`;
+}
+
+function mapNoticeAttachments(attachments: unknown) {
+  if (!Array.isArray(attachments)) return attachments;
+  return attachments.map((item) => (typeof item === "string" ? toSecureFileUrl(item) : item));
+}
+
+async function getActiveAcademicYearId(schoolId: string): Promise<string | null> {
+  const academicYear = await prisma.academicYear.findFirst({
+    where: { schoolId, isActive: true },
+    select: { id: true },
+  });
+  return academicYear?.id ?? null;
+}
+
+async function resolveStudentTargets(schoolId: string, userId: string) {
+  const academicYearId = await getActiveAcademicYearId(schoolId);
+  if (!academicYearId) {
+    return { classIds: [], sectionIds: [] };
+  }
+
+  const student = await prisma.student.findFirst({
+    where: { schoolId, userId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!student) {
+    return { classIds: [], sectionIds: [] };
+  }
+
+  const enrollment = await prisma.studentEnrollment.findFirst({
+    where: { studentId: student.id, academicYearId },
+    select: { classId: true, sectionId: true },
+  });
+
+  return {
+    classIds: enrollment?.classId ? [enrollment.classId] : [],
+    sectionIds: enrollment?.sectionId ? [enrollment.sectionId] : [],
+  };
+}
+
+async function resolveParentTargets(schoolId: string, userId: string) {
+  const academicYearId = await getActiveAcademicYearId(schoolId);
+  if (!academicYearId) {
+    return { classIds: [], sectionIds: [] };
+  }
+
+  const parent = await prisma.parent.findFirst({
+    where: { schoolId, userId },
+    select: { id: true },
+  });
+
+  if (!parent) {
+    return { classIds: [], sectionIds: [] };
+  }
+
+  const links = await prisma.parentStudentLink.findMany({
+    where: { parentId: parent.id },
+    select: { studentId: true },
+  });
+
+  const studentIds = links.map((link) => link.studentId);
+  if (studentIds.length === 0) {
+    return { classIds: [], sectionIds: [] };
+  }
+
+  const enrollments = await prisma.studentEnrollment.findMany({
+    where: { studentId: { in: studentIds }, academicYearId },
+    select: { classId: true, sectionId: true },
+  });
+
+  const classIds = new Set<string>();
+  const sectionIds = new Set<string>();
+  enrollments.forEach((enrollment) => {
+    if (enrollment.classId) classIds.add(enrollment.classId);
+    if (enrollment.sectionId) sectionIds.add(enrollment.sectionId);
+  });
+
+  return {
+    classIds: Array.from(classIds),
+    sectionIds: Array.from(sectionIds),
+  };
+}
+
+async function resolveTeacherTargets(schoolId: string, userId: string) {
+  const teacher = await prisma.teacher.findFirst({
+    where: { schoolId, userId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!teacher) {
+    return { classIds: [], sectionIds: [] };
+  }
+
+  const academicYearId = await getActiveAcademicYearId(schoolId);
+
+  const [classTeacherSections, subjectLinks] = await Promise.all([
+    prisma.section.findMany({
+      where: { classTeacherId: teacher.id, deletedAt: null, class: { schoolId, deletedAt: null } },
+      select: { id: true, classId: true },
+    }),
+    prisma.teacherSubjectClass.findMany({
+      where: {
+        teacherId: teacher.id,
+        ...(academicYearId ? { academicYearId } : {}),
+      },
+      select: {
+        sectionId: true,
+        classSubject: { select: { classId: true } },
+      },
+    }),
+  ]);
+
+  const classIds = new Set<string>();
+  const sectionIds = new Set<string>();
+
+  classTeacherSections.forEach((section) => {
+    classIds.add(section.classId);
+    sectionIds.add(section.id);
+  });
+
+  subjectLinks.forEach((link) => {
+    if (link.classSubject?.classId) classIds.add(link.classSubject.classId);
+    if (link.sectionId) sectionIds.add(link.sectionId);
+  });
+
+  return {
+    classIds: Array.from(classIds),
+    sectionIds: Array.from(sectionIds),
+  };
+}
 
 function mapPrismaError(error: unknown): never {
   const code =
@@ -58,6 +201,7 @@ export async function createNotice(
         publishedAt: payload.publishedAt ?? new Date(),
         expiresAt: payload.expiresAt ?? null,
         createdById: createdById ?? null,
+        attachments: payload.attachments ?? Prisma.JsonNull,
       },
     });
 
@@ -72,6 +216,60 @@ export async function createNotice(
           title: notice.title,
         },
       });
+    }
+
+    try {
+      const targetType = notice.targetType ?? "ALL";
+      if (targetType === "ALL") {
+        await triggerNotification("SCHOOL_BROADCAST", {
+          schoolId,
+          title: notice.title,
+          body: notice.content,
+          sentById: createdById ?? undefined,
+          entityType: "NOTICE",
+          entityId: notice.id,
+          linkUrl: `/notices/${notice.id}`,
+          metadata: { noticeId: notice.id },
+        });
+      } else if (targetType === "ROLE" && notice.targetRole) {
+        await triggerNotification("ROLE_BROADCAST", {
+          schoolId,
+          title: notice.title,
+          body: notice.content,
+          roles: [notice.targetRole as UserRole],
+          sentById: createdById ?? undefined,
+          entityType: "NOTICE",
+          entityId: notice.id,
+          linkUrl: `/notices/${notice.id}`,
+          metadata: { noticeId: notice.id },
+        });
+      } else if (targetType === "CLASS" && notice.targetClassId) {
+        await triggerNotification("CLASS_BROADCAST", {
+          schoolId,
+          title: notice.title,
+          body: notice.content,
+          classId: notice.targetClassId,
+          sentById: createdById ?? undefined,
+          entityType: "NOTICE",
+          entityId: notice.id,
+          linkUrl: `/notices/${notice.id}`,
+          metadata: { noticeId: notice.id },
+        });
+      } else if (targetType === "SECTION" && notice.targetSectionId) {
+        await triggerNotification("SECTION_BROADCAST", {
+          schoolId,
+          title: notice.title,
+          body: notice.content,
+          sectionId: notice.targetSectionId,
+          sentById: createdById ?? undefined,
+          entityType: "NOTICE",
+          entityId: notice.id,
+          linkUrl: `/notices/${notice.id}`,
+          metadata: { noticeId: notice.id },
+        });
+      }
+    } catch (error) {
+      console.warn("[notice] notification trigger failed", error);
     }
 
     return notice;
@@ -124,11 +322,7 @@ export async function listNotices(
       : {}),
     ...(targetFilters.length > 0
       ? {
-          OR: [
-            { targetType: "ALL" },
-            { targetType: null as never },
-            ...targetFilters,
-          ],
+          OR: [{ targetType: "ALL" }, ...targetFilters],
         }
       : {}),
   };
@@ -140,6 +334,7 @@ export async function listNotices(
       select: {
         id: true,
         title: true,
+        content: true,
         noticeType: true,
         isPublic: true,
         targetType: true,
@@ -150,13 +345,122 @@ export async function listNotices(
         expiresAt: true,
         createdAt: true,
         updatedAt: true,
+        attachments: true,
       },
       ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}),
     }),
     prisma.noticeBoard.count({ where }),
   ]);
 
-  return { items, total };
+  const mappedItems = items.map((item) => ({
+    ...item,
+    attachments: mapNoticeAttachments(item.attachments),
+  }));
+
+  return { items: mappedItems, total };
+}
+
+export async function listNoticesForActor(
+  schoolId: string,
+  actor: NoticeActor,
+  pagination?: { skip: number; take: number },
+  options?: { active?: boolean }
+) {
+  const roleType = actor.roleType;
+  const isAdmin =
+    roleType === "ADMIN" ||
+    roleType === "SUPER_ADMIN" ||
+    roleType === "ACADEMIC_SUB_ADMIN";
+
+  if (isAdmin) {
+    return listNotices(
+      schoolId,
+      { active: options?.active ?? false },
+      pagination
+    );
+  }
+
+  if (roleType === "TEACHER") {
+    return listNotices(
+      schoolId,
+      { active: options?.active ?? true },
+      pagination
+    );
+  }
+
+  const now = new Date();
+  const baseWhere: Prisma.NoticeBoardWhereInput = {
+    schoolId,
+    publishedAt: { lte: now },
+    OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+  };
+
+  const targetFilters: Prisma.NoticeBoardWhereInput[] = [{ targetType: "ALL" }];
+
+  let classIds: string[] = [];
+  let sectionIds: string[] = [];
+
+  if (roleType === "STUDENT") {
+    const targets = await resolveStudentTargets(schoolId, actor.userId);
+    classIds = targets.classIds;
+    sectionIds = targets.sectionIds;
+    targetFilters.push({ targetType: "ROLE", targetRole: "STUDENT" });
+  } else if (roleType === "PARENT") {
+    const targets = await resolveParentTargets(schoolId, actor.userId);
+    classIds = targets.classIds;
+    sectionIds = targets.sectionIds;
+    targetFilters.push({ targetType: "ROLE", targetRole: "PARENT" });
+  } else if (roleType === "TEACHER") {
+    const targets = await resolveTeacherTargets(schoolId, actor.userId);
+    classIds = targets.classIds;
+    sectionIds = targets.sectionIds;
+    targetFilters.push({ targetType: "ROLE", targetRole: "TEACHER" });
+  }
+
+  classIds.forEach((classId) => {
+    targetFilters.push({ targetType: "CLASS", targetClassId: classId });
+  });
+
+  sectionIds.forEach((sectionId) => {
+    targetFilters.push({ targetType: "SECTION", targetSectionId: sectionId });
+  });
+
+  const where: Prisma.NoticeBoardWhereInput = {
+    ...baseWhere,
+    OR: targetFilters,
+  };
+
+  const [items, total] = await prisma.$transaction([
+    prisma.noticeBoard.findMany({
+      where,
+      orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        noticeType: true,
+        isPublic: true,
+        targetType: true,
+        targetClassId: true,
+        targetSectionId: true,
+        targetRole: true,
+        publishedAt: true,
+        expiresAt: true,
+        createdAt: true,
+        updatedAt: true,
+        attachments: true,
+      },
+      ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}),
+    }),
+    prisma.noticeBoard.count({ where }),
+  ]);
+
+  const mappedItems = items.map((item) => ({
+    ...item,
+    attachments: mapNoticeAttachments(item.attachments),
+  }));
+
+  return { items: mappedItems, total };
 }
 
 export async function getNoticeById(schoolId: string, id: string) {
@@ -168,7 +472,90 @@ export async function getNoticeById(schoolId: string, id: string) {
     throw new ApiError(404, "Notice not found");
   }
 
-  return notice;
+  return { ...notice, attachments: mapNoticeAttachments(notice.attachments) };
+}
+
+export async function getNoticeForActor(
+  schoolId: string,
+  id: string,
+  actor: NoticeActor
+) {
+  const roleType = actor.roleType;
+  const isAdmin =
+    roleType === "ADMIN" ||
+    roleType === "SUPER_ADMIN" ||
+    roleType === "ACADEMIC_SUB_ADMIN";
+
+  if (isAdmin) {
+    return getNoticeById(schoolId, id);
+  }
+
+  if (roleType === "TEACHER") {
+    const now = new Date();
+    const notice = await prisma.noticeBoard.findFirst({
+      where: {
+        id,
+        schoolId,
+        publishedAt: { lte: now },
+        OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+      },
+    });
+
+    if (!notice) {
+      throw new ApiError(404, "Notice not found");
+    }
+
+    return { ...notice, attachments: mapNoticeAttachments(notice.attachments) };
+  }
+
+  const now = new Date();
+  const targetFilters: Prisma.NoticeBoardWhereInput[] = [{ targetType: "ALL" }];
+
+  let classIds: string[] = [];
+  let sectionIds: string[] = [];
+
+  if (roleType === "STUDENT") {
+    const targets = await resolveStudentTargets(schoolId, actor.userId);
+    classIds = targets.classIds;
+    sectionIds = targets.sectionIds;
+    targetFilters.push({ targetType: "ROLE", targetRole: "STUDENT" });
+  } else if (roleType === "PARENT") {
+    const targets = await resolveParentTargets(schoolId, actor.userId);
+    classIds = targets.classIds;
+    sectionIds = targets.sectionIds;
+    targetFilters.push({ targetType: "ROLE", targetRole: "PARENT" });
+  } else if (roleType === "TEACHER") {
+    const targets = await resolveTeacherTargets(schoolId, actor.userId);
+    classIds = targets.classIds;
+    sectionIds = targets.sectionIds;
+    targetFilters.push({ targetType: "ROLE", targetRole: "TEACHER" });
+  }
+
+  classIds.forEach((classId) => {
+    targetFilters.push({ targetType: "CLASS", targetClassId: classId });
+  });
+
+  sectionIds.forEach((sectionId) => {
+    targetFilters.push({ targetType: "SECTION", targetSectionId: sectionId });
+  });
+
+  const notice = await prisma.noticeBoard.findFirst({
+    where: {
+      id,
+      schoolId,
+      publishedAt: { lte: now },
+      AND: [
+        { OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] },
+        { OR: targetFilters },
+      ],
+    },
+  });
+
+  if (!notice) {
+    throw new ApiError(404, "Notice not found");
+  }
+
+  return { ...notice, attachments: mapNoticeAttachments(notice.attachments) };
 }
 
 export async function updateNotice(
@@ -199,6 +586,7 @@ export async function updateNotice(
           ? { publishedAt: payload.publishedAt }
           : {}),
         ...(payload.expiresAt !== undefined ? { expiresAt: payload.expiresAt } : {}),
+        ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
       },
     });
 

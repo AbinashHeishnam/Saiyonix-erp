@@ -4,8 +4,13 @@ import { authMiddleware } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { validate } from "../../middleware/validate.middleware";
-import { create, getById, list, remove, update } from "./controller";
-import { createNoteSchema, updateNoteSchema } from "./validation";
+import { create, getById, list, remove, update } from "@/modules/notes/controller";
+import {
+  createNoteSchema,
+  listNoteQuerySchema,
+  noteIdParamSchema,
+  updateNoteSchema,
+} from "@/modules/notes/validation";
 
 const notesRouter = Router();
 
@@ -30,6 +35,7 @@ notesRouter.get(
     "STUDENT"
   ),
   requirePermission("note:read"),
+  validate({ query: listNoteQuerySchema }),
   list
 );
 
@@ -45,6 +51,7 @@ notesRouter.get(
     "STUDENT"
   ),
   requirePermission("note:read"),
+  validate({ params: noteIdParamSchema }),
   getById
 );
 
@@ -53,7 +60,7 @@ notesRouter.patch(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
   requirePermission("note:update"),
-  validate(updateNoteSchema),
+  validate({ params: noteIdParamSchema, body: updateNoteSchema }),
   update
 );
 
@@ -62,6 +69,7 @@ notesRouter.delete(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
   requirePermission("note:delete"),
+  validate({ params: noteIdParamSchema }),
   remove
 );
 

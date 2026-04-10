@@ -1,17 +1,17 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMetaWithSync, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMetaWithSync, parsePagination } from "@/utils/pagination";
 import {
   getUnreadCount as getUnreadCountService,
   listNotifications as listNotificationsService,
   markAllRead as markAllReadService,
   markRead as markReadService,
   sendNotification as sendNotificationService,
-} from "./service";
-import { notificationIdSchema } from "./validation";
+} from "@/modules/notification/service";
+import { notificationIdSchema } from "@/modules/notification/validation";
 
 function getSchoolId(req: AuthRequest): string {
   if (!req.schoolId) {

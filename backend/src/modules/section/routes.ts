@@ -4,8 +4,13 @@ import { authMiddleware } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { validate } from "../../middleware/validate.middleware";
-import { create, getById, getTimetable, list, remove, update } from "./controller";
-import { createSectionSchema, updateSectionSchema } from "./validation";
+import { create, getById, getTimetable, list, remove, update } from "@/modules/section/controller";
+import {
+  createSectionSchema,
+  listSectionQuerySchema,
+  sectionIdParamSchema,
+  updateSectionSchema,
+} from "@/modules/section/validation";
 
 const sectionRouter = Router();
 
@@ -17,21 +22,22 @@ sectionRouter.post(
   validate(createSectionSchema),
   create
 );
-sectionRouter.get("/", authMiddleware, list);
+sectionRouter.get("/", authMiddleware, validate({ query: listSectionQuerySchema }), list);
 sectionRouter.get(
   "/:id/timetable",
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER", "PARENT", "STUDENT"),
   requirePermission("timetableSlot:read"),
+  validate({ params: sectionIdParamSchema }),
   getTimetable
 );
-sectionRouter.get("/:id", authMiddleware, getById);
+sectionRouter.get("/:id", authMiddleware, validate({ params: sectionIdParamSchema }), getById);
 sectionRouter.patch(
   "/:id",
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("section:update"),
-  validate(updateSectionSchema),
+  validate({ params: sectionIdParamSchema, body: updateSectionSchema }),
   update
 );
 sectionRouter.delete(
@@ -39,6 +45,7 @@ sectionRouter.delete(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("section:delete"),
+  validate({ params: sectionIdParamSchema }),
   remove
 );
 

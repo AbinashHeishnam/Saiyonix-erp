@@ -1,6 +1,9 @@
 import { z } from "zod";
 
+import { paginationQuerySchema } from "@/utils/pagination";
+
 export const noteIdSchema = z.string().uuid();
+export const noteIdParamSchema = z.object({ id: noteIdSchema }).strict();
 
 export const createNoteSchema = z.object({
   classSubjectId: z.string().uuid(),
@@ -24,8 +27,8 @@ export const updateNoteSchema = z
     message: "At least one field is required",
   });
 
-export const listNoteQuerySchema = z
-  .object({
+export const listNoteQuerySchema = paginationQuerySchema
+  .extend({
     classSubjectId: z.string().uuid().optional(),
     sectionId: z.string().uuid().optional(),
     studentId: z.string().uuid().optional(),

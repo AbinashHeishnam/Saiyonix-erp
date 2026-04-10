@@ -1,5 +1,5 @@
-import type { SmsConfig } from "../../../config/externalServices";
-import type { SmsSendPayload, SmsSendResult } from "../types";
+import type { SmsConfig } from "@/core/config/externalServices";
+import type { SmsSendPayload, SmsSendResult } from "@/core/services/sms/types";
 
 export async function sendWithMsg91(
   config: SmsConfig,

@@ -10,11 +10,13 @@ import {
   list,
   remove,
   update,
-} from "./controller";
+} from "@/modules/teacherSubjectClass/controller";
 import {
   createTeacherSubjectClassSchema,
+  listTeacherSubjectClassQuerySchema,
+  teacherSubjectClassIdParamSchema,
   updateTeacherSubjectClassSchema,
-} from "./validation";
+} from "@/modules/teacherSubjectClass/validation";
 
 const teacherSubjectClassRouter = Router();
 
@@ -27,15 +29,29 @@ teacherSubjectClassRouter.post(
   create
 );
 
-teacherSubjectClassRouter.get("/", authMiddleware, list);
-teacherSubjectClassRouter.get("/:id", authMiddleware, getById);
+teacherSubjectClassRouter.get(
+  "/",
+  authMiddleware,
+  allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
+  requirePermission("teacherSubjectClass:read"),
+  validate({ query: listTeacherSubjectClassQuerySchema }),
+  list
+);
+teacherSubjectClassRouter.get(
+  "/:id",
+  authMiddleware,
+  allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
+  requirePermission("teacherSubjectClass:read"),
+  validate({ params: teacherSubjectClassIdParamSchema }),
+  getById
+);
 
 teacherSubjectClassRouter.patch(
   "/:id",
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("teacherSubjectClass:update"),
-  validate(updateTeacherSubjectClassSchema),
+  validate({ params: teacherSubjectClassIdParamSchema, body: updateTeacherSubjectClassSchema }),
   update
 );
 
@@ -44,6 +60,7 @@ teacherSubjectClassRouter.delete(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("teacherSubjectClass:delete"),
+  validate({ params: teacherSubjectClassIdParamSchema }),
   remove
 );
 

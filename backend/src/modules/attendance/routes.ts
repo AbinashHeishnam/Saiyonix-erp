@@ -5,15 +5,25 @@ import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { attendanceLimiter } from "../../middleware/rateLimiter.middleware";
 import { validate } from "../../middleware/validate.middleware";
+import { allowOnlyClassTeacher } from "@/middleware/classTeacher.middleware";
 import {
+  attendanceContext,
   create,
   listAudit,
   schoolSummary,
   studentMonthlySummary,
+  teacherContext,
   update,
-} from "./controller";
-import correctionsRouter from "./corrections/routes";
-import { createAttendanceSchema, updateAttendanceSchema } from "./validation";
+} from "@/modules/attendance/controller";
+import correctionsRouter from "@/modules/attendance/corrections/routes";
+import {
+  attendanceAuditQuerySchema,
+  attendanceIdParamSchema,
+  createAttendanceSchema,
+  schoolSummaryQuerySchema,
+  studentMonthlySummaryQuerySchema,
+  updateAttendanceSchema,
+} from "@/modules/attendance/validation";
 
 const attendanceRouter = Router();
 
@@ -25,7 +35,16 @@ attendanceRouter.post(
   allowRoles("TEACHER"),
   requirePermission("attendance:mark"),
   validate(createAttendanceSchema),
+  allowOnlyClassTeacher,
   create
+);
+
+attendanceRouter.get(
+  "/context",
+  authMiddleware,
+  allowRoles("TEACHER"),
+  requirePermission("attendance:mark"),
+  attendanceContext
 );
 
 attendanceRouter.patch(
@@ -33,14 +52,24 @@ attendanceRouter.patch(
   authMiddleware,
   allowRoles("TEACHER"),
   requirePermission("attendance:update"),
-  validate(updateAttendanceSchema),
+  validate({ params: attendanceIdParamSchema, body: updateAttendanceSchema }),
+  allowOnlyClassTeacher,
   update
+);
+
+attendanceRouter.get(
+  "/class-teacher/context",
+  authMiddleware,
+  allowRoles("TEACHER"),
+  requirePermission("attendance:mark"),
+  teacherContext
 );
 
 attendanceRouter.get(
   "/audit",
   authMiddleware,
   requirePermission("attendance:read"),
+  validate({ query: attendanceAuditQuerySchema }),
   listAudit
 );
 
@@ -48,6 +77,7 @@ attendanceRouter.get(
   "/summaries/student",
   authMiddleware,
   requirePermission("attendance:read"),
+  validate({ query: studentMonthlySummaryQuerySchema }),
   studentMonthlySummary
 );
 
@@ -55,6 +85,7 @@ attendanceRouter.get(
   "/summaries/school",
   authMiddleware,
   requirePermission("attendance:read"),
+  validate({ query: schoolSummaryQuerySchema }),
   schoolSummary
 );
 

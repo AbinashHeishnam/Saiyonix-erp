@@ -1,8 +1,10 @@
-import prisma from "../../../core/db/prisma";
-import { ApiError } from "../../../core/errors/apiError";
-import { DEFAULT_ATTENDANCE_THRESHOLDS } from "../../../core/risk/attendanceRisk";
-import { normalizeDate } from "../../../core/utils/date";
-import type { AttendanceSummary } from "../types";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { formatLocalDate, toLocalDateOnly } from "@/core/utils/localDate";
+import { DEFAULT_ATTENDANCE_THRESHOLDS } from "@/core/risk/attendanceRisk";
+import { normalizeDate } from "@/core/utils/date";
+import type { AttendanceSummary } from "@/modules/attendance/types";
+import { getAttendanceBlockedDates, getSessionStartDate } from "@/modules/academicCalendar/service";
 
 const PRESENT_STATUSES = ["PRESENT", "LATE", "HALF_DAY", "EXCUSED"] as const;
 
@@ -144,12 +146,34 @@ export async function getStudentMonthlySummary(params: {
   }
 
   const { start, end } = buildMonthRange(params.year, params.month);
+  const sessionStart = await getSessionStartDate(prisma, params.academicYearId);
+  const effectiveStart = sessionStart && sessionStart > start ? sessionStart : start;
+  if (effectiveStart > end) {
+    return {
+      studentId: params.studentId,
+      academicYearId: params.academicYearId,
+      month: params.month,
+      year: params.year,
+      ...createEmptySummary(),
+    };
+  }
+
+  const blockedDates = await getAttendanceBlockedDates({
+    academicYearId: params.academicYearId,
+    from: effectiveStart,
+    to: end,
+  });
+  const blockedArray = Array.from(blockedDates).map((value) => new Date(value));
 
   const records = await prisma.studentAttendance.findMany({
     where: {
       studentId: params.studentId,
       academicYearId: params.academicYearId,
-      attendanceDate: { gte: start, lte: end },
+      attendanceDate: {
+        gte: effectiveStart,
+        lte: end,
+        ...(blockedArray.length > 0 ? { notIn: blockedArray } : {}),
+      },
       student: { schoolId: params.schoolId, deletedAt: null },
       section: { class: { schoolId: params.schoolId, deletedAt: null }, deletedAt: null },
     },
@@ -193,25 +217,52 @@ export async function getStudentMonthlySummaries(params: {
   }
 
   const { start, end } = buildMonthRange(params.year, params.month);
+  const sessionStart = await getSessionStartDate(prisma, params.academicYearId);
+  const effectiveStart = sessionStart && sessionStart > start ? sessionStart : start;
+  if (effectiveStart > end) {
+    const empty = new Map<
+      string,
+      AttendanceSummary & { studentId: string; academicYearId: string; month: number; year: number }
+    >();
+    for (const studentId of params.studentIds) {
+      empty.set(studentId, {
+        studentId,
+        academicYearId: params.academicYearId,
+        month: params.month,
+        year: params.year,
+        ...createEmptySummary(),
+      });
+    }
+    return empty;
+  }
+  const blockedDates = await getAttendanceBlockedDates({
+    academicYearId: params.academicYearId,
+    from: effectiveStart,
+    to: end,
+  });
+  const blockedArray = Array.from(blockedDates).map((value) => new Date(value));
   const riskThreshold = await getRiskThreshold(params.schoolId);
 
-  const grouped = await prisma.studentAttendance.groupBy({
-    by: ["studentId", "status"],
+  const grouped = await prisma.studentAttendance.findMany({
     where: {
       studentId: { in: params.studentIds },
       academicYearId: params.academicYearId,
-      attendanceDate: { gte: start, lte: end },
+      attendanceDate: {
+        gte: effectiveStart,
+        lte: end,
+        ...(blockedArray.length > 0 ? { notIn: blockedArray } : {}),
+      },
       student: { schoolId: params.schoolId, deletedAt: null },
       section: { class: { schoolId: params.schoolId, deletedAt: null }, deletedAt: null },
     },
-    _count: { _all: true },
+    select: { studentId: true, status: true },
   });
 
   const summaries = new Map<string, AttendanceSummary>();
 
   for (const row of grouped) {
     const current = summaries.get(row.studentId) ?? createEmptySummary();
-    applyStatusCount(current, String(row.status), row._count._all);
+    applyStatusCount(current, String(row.status), 1);
     summaries.set(row.studentId, current);
   }
 
@@ -248,9 +299,35 @@ export async function getSchoolAttendanceSummary(params: {
     academicYearId: string;
   }
 > {
-  const date = params.date ? normalizeDate(new Date(params.date)) : normalizeDate(new Date());
-  if (Number.isNaN(date.getTime())) {
+  const raw = params.date ? new Date(params.date) : new Date();
+  if (Number.isNaN(raw.getTime())) {
     throw new ApiError(400, "Invalid date");
+  }
+  const school = await prisma.school.findUnique({
+    where: { id: params.schoolId },
+    select: { timezone: true },
+  });
+  const timeZone = school?.timezone ?? "Asia/Kolkata";
+  const date = toLocalDateOnly(normalizeDate(raw), timeZone);
+  const sessionStart = await getSessionStartDate(prisma, params.academicYearId);
+  if (sessionStart && date < sessionStart) {
+    return {
+      academicYearId: params.academicYearId,
+      date: formatLocalDate(date, timeZone),
+      ...createEmptySummary(),
+    };
+  }
+  const blocked = await getAttendanceBlockedDates({
+    academicYearId: params.academicYearId,
+    from: date,
+    to: date,
+  });
+  if (blocked.has(normalizeDate(date).toISOString())) {
+    return {
+      academicYearId: params.academicYearId,
+      date: formatLocalDate(date, timeZone),
+      ...createEmptySummary(),
+    };
   }
 
   const records = await prisma.studentAttendance.findMany({
@@ -271,7 +348,7 @@ export async function getSchoolAttendanceSummary(params: {
 
   return {
     academicYearId: params.academicYearId,
-    date: date.toISOString().slice(0, 10),
+    date: formatLocalDate(date, timeZone),
     ...summary,
   };
 }

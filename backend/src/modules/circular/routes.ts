@@ -4,8 +4,13 @@ import { authMiddleware } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { validate } from "../../middleware/validate.middleware";
-import { create, getById, list, remove, update } from "./controller";
-import { createCircularSchema, updateCircularSchema } from "./validation";
+import { create, getById, list, remove, update } from "@/modules/circular/controller";
+import {
+  circularIdParamSchema,
+  createCircularSchema,
+  listCircularQuerySchema,
+  updateCircularSchema,
+} from "@/modules/circular/validation";
 
 const circularRouter = Router();
 
@@ -31,6 +36,7 @@ circularRouter.get(
     "STUDENT"
   ),
   requirePermission("circular:read"),
+  validate({ query: listCircularQuerySchema }),
   list
 );
 
@@ -47,6 +53,7 @@ circularRouter.get(
     "STUDENT"
   ),
   requirePermission("circular:read"),
+  validate({ params: circularIdParamSchema }),
   getById
 );
 
@@ -55,7 +62,7 @@ circularRouter.patch(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("circular:update"),
-  validate(updateCircularSchema),
+  validate({ params: circularIdParamSchema, body: updateCircularSchema }),
   update
 );
 
@@ -64,6 +71,7 @@ circularRouter.delete(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("circular:delete"),
+  validate({ params: circularIdParamSchema }),
   remove
 );
 

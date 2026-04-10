@@ -1,9 +1,13 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { importTeachers, previewTeachers } from "./service";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import {
+  buildTeacherImportTemplate,
+  importTeachersFromCsv,
+  previewTeachersFromCsv,
+} from "@/modules/teacherBulkImport/service";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {
@@ -20,7 +24,10 @@ export async function importTeacherBulk(
 ) {
   try {
     const schoolId = getSchoolId(req);
-    const data = await importTeachers(schoolId, req.body);
+    if (!Buffer.isBuffer(req.body)) {
+      throw new ApiError(400, "CSV file is required");
+    }
+    const data = await importTeachersFromCsv(schoolId, req.body);
     return success(res, data, "Teacher import completed");
   } catch (error) {
     return next(error);
@@ -34,7 +41,10 @@ export async function previewTeacherBulk(
 ) {
   try {
     const schoolId = getSchoolId(req);
-    const data = await previewTeachers(schoolId, req.body);
+    if (!Buffer.isBuffer(req.body)) {
+      throw new ApiError(400, "CSV file is required");
+    }
+    const data = await previewTeachersFromCsv(schoolId, req.body);
     return success(res, data, "Teacher import preview completed");
   } catch (error) {
     return next(error);
@@ -47,9 +57,58 @@ export async function getTeacherTemplate(
   next: NextFunction
 ) {
   try {
-    const template =
-      "fullName,employeeId,gender,designation,department,joiningDate,qualification,phone,email,address,photoUrl";
+    const template = buildTeacherImportTemplate();
     return success(res, { template }, "Teacher import template generated");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getFailedTeacherCsv(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const errors = (req.body?.errors ?? []) as Array<{
+      row: number;
+      reason: string;
+      data: Record<string, string>;
+    }>;
+
+    if (!Array.isArray(errors) || errors.length === 0) {
+      throw new ApiError(400, "errors array is required");
+    }
+
+    const headers = [
+      "firstName",
+      "lastName",
+      "email",
+      "phone",
+      "gender",
+      "qualification",
+      "experienceYears",
+      "address",
+      "error",
+    ];
+
+    const rows = errors.map((item) => {
+      const rowData = item.data ?? {};
+      const values = headers.slice(0, -1).map((key) =>
+        String(rowData[key] ?? "").replace(/"/g, "\"\"")
+      );
+      values.push(String(item.reason ?? "").replace(/"/g, "\"\""));
+      return values.map((value) => `"${value}"`).join(",");
+    });
+
+    const csv = [headers.join(","), ...rows].join("\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=failed_teachers.csv"
+    );
+    return res.status(200).send(csv);
   } catch (error) {
     return next(error);
   }

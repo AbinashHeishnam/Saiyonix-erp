@@ -1,7 +1,7 @@
 import { NextFunction, Response } from "express";
 import { AuthRequest } from "./auth.middleware";
-import { roleHasPermission } from "../modules/auth/permission.service";
-import { error as errorResponse } from "../utils/apiResponse";
+import { roleHasPermission } from "@/modules/auth/permission.service";
+import { error as errorResponse } from "@/utils/apiResponse";
 
 export function requirePermission(permissionKey: string) {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {

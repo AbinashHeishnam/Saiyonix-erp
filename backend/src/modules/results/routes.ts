@@ -1,0 +1,42 @@
+import { Router } from "express";
+
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { requirePermission } from "../../middleware/permission.middleware";
+import { allowRoles } from "../../middleware/rbac.middleware";
+import { heavyJobLimiter } from "../../middleware/rateLimiter.middleware";
+import { validate } from "../../middleware/validate.middleware";
+import { getForStudent, publish, recompute } from "@/modules/results/controller";
+import { examIdParamSchema, resultsQuerySchema } from "@/modules/results/validation";
+
+const resultsRouter = Router();
+
+resultsRouter.patch(
+  "/:examId/publish",
+  authMiddleware,
+  heavyJobLimiter,
+  allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"),
+  requirePermission("result:publish"),
+  validate({ params: examIdParamSchema }),
+  publish
+);
+
+resultsRouter.post(
+  "/:examId/recompute",
+  authMiddleware,
+  heavyJobLimiter,
+  allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"),
+  requirePermission("result:recompute"),
+  validate({ params: examIdParamSchema }),
+  recompute
+);
+
+resultsRouter.get(
+  "/:examId",
+  authMiddleware,
+  allowRoles("STUDENT", "PARENT", "ADMIN", "ACADEMIC_SUB_ADMIN"),
+  requirePermission("result:read"),
+  validate({ params: examIdParamSchema, query: resultsQuerySchema }),
+  getForStudent
+);
+
+export default resultsRouter;

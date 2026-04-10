@@ -1,18 +1,21 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import { listTimetableForStudent } from "../timetableSlot/service";
+import prisma from "@/core/db/prisma";
+import { trigger } from "@/modules/notification/service";
+import { ApiError } from "@/core/errors/apiError";
+import { canAccessResource } from "@/core/security/accessControl";
+import { logSecurity } from "@/core/security/logger";
+import { listTimetableForStudent } from "@/modules/timetableSlot/service";
 import type {
   CreateStudentInput,
   EnrollmentInput,
   ParentInput,
   StudentProfileInput,
   UpdateStudentInput,
-} from "./validation";
+} from "@/modules/student/validation";
 
 type PrismaError = { code?: string; meta?: { target?: string[] | string } };
-type DbClient = Prisma.TransactionClient | typeof prisma;
+type DbClient = typeof prisma;
 
 type EnrollmentLookup = {
   id: string;
@@ -20,6 +23,143 @@ type EnrollmentLookup = {
   sectionId: string;
   academicYearId: string;
   rollNumber: number | null;
+};
+
+type ActorContext = {
+  userId?: string;
+  roleType?: string;
+};
+
+function toPublicUrl(value?: string | null) {
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith("/api/v1/files/secure")) return value;
+  return `/api/v1/files/secure?fileUrl=${encodeURIComponent(value)}`;
+}
+
+const ADMIN_ROLES = new Set([
+  "SUPER_ADMIN",
+  "ADMIN",
+  "ACADEMIC_SUB_ADMIN",
+  "FINANCE_SUB_ADMIN",
+]);
+
+function sanitizeParentForRole(
+  parent: {
+    id: string;
+    fullName: string;
+    mobile?: string | null;
+    email?: string | null;
+    relationToStudent?: string | null;
+  } | null,
+  roleType?: string
+) {
+  if (!parent) return parent;
+  if (roleType === "PARENT") {
+    return parent;
+  }
+  return {
+    id: parent.id,
+    fullName: parent.fullName,
+    relationToStudent: parent.relationToStudent ?? null,
+  };
+}
+
+function shapeStudentForRole(
+  student: {
+    id: string;
+    schoolId: string;
+    userId?: string | null;
+    registrationNumber: string;
+    admissionNumber?: string | null;
+    fullName: string;
+    dateOfBirth: Date;
+    gender: string;
+    bloodGroup?: string | null;
+    status: string;
+    deletedAt?: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+    profile?: {
+      profilePhotoUrl?: string | null;
+      address?: string | null;
+      emergencyContactName?: string | null;
+      emergencyContactMobile?: string | null;
+      previousSchool?: string | null;
+      medicalInfo?: unknown;
+    } | null;
+    parentLinks?: Array<{
+      id: string;
+      isPrimary: boolean;
+      parent?: {
+        id: string;
+        fullName: string;
+        mobile?: string | null;
+        email?: string | null;
+        relationToStudent?: string | null;
+      } | null;
+    }>;
+    enrollments?: unknown;
+  },
+  roleType?: string
+) {
+  const resolvedRole = roleType ?? "UNKNOWN";
+
+  if (ADMIN_ROLES.has(resolvedRole)) {
+    return {
+      ...student,
+      profile: student.profile
+        ? { ...student.profile, profilePhotoUrl: toPublicUrl(student.profile.profilePhotoUrl) }
+        : student.profile,
+    };
+  }
+
+  if (resolvedRole === "TEACHER") {
+    return {
+      id: student.id,
+      schoolId: student.schoolId,
+      userId: student.userId ?? null,
+      registrationNumber: student.registrationNumber,
+      admissionNumber: student.admissionNumber ?? null,
+      fullName: student.fullName,
+      gender: student.gender,
+      status: student.status,
+      createdAt: student.createdAt,
+      updatedAt: student.updatedAt,
+      enrollments: student.enrollments,
+      profile: student.profile
+        ? { profilePhotoUrl: toPublicUrl(student.profile.profilePhotoUrl) }
+        : student.profile,
+      parentLinks: student.parentLinks?.map((link) => ({
+        id: link.id,
+        isPrimary: link.isPrimary,
+        parent: sanitizeParentForRole(link.parent ?? null, "TEACHER"),
+      })),
+    };
+  }
+
+  const sanitizedParentLinks = student.parentLinks?.map((link) => ({
+    id: link.id,
+    isPrimary: link.isPrimary,
+    parent: sanitizeParentForRole(link.parent ?? null, resolvedRole),
+  }));
+
+  return {
+    ...student,
+    profile: student.profile
+      ? { ...student.profile, profilePhotoUrl: toPublicUrl(student.profile.profilePhotoUrl) }
+      : student.profile,
+    parentLinks: sanitizedParentLinks,
+  };
+}
+
+type ClassTeacherInfo = {
+  teacherId: string;
+  userId: string | null;
+  fullName: string;
+  email: string | null;
+  mobile: string | null;
+  photoUrl: string | null;
 };
 
 async function generateStudentNumbers(client: DbClient, schoolId: string) {
@@ -154,6 +294,127 @@ async function ensureStudentExists(schoolId: string, id: string) {
   return student;
 }
 
+async function getActiveAcademicYearId(schoolId: string) {
+  const academicYear = await prisma.academicYear.findFirst({
+    where: { schoolId, isActive: true },
+    select: { id: true },
+  });
+
+  if (!academicYear) {
+    throw new ApiError(400, "Active academic year not found");
+  }
+
+  return academicYear.id;
+}
+
+async function resolveStudentIdForParent(
+  schoolId: string,
+  userId: string,
+  preferredStudentId?: string
+) {
+  const parent = await prisma.parent.findFirst({
+    where: { schoolId, userId },
+    select: { id: true },
+  });
+
+  if (!parent) {
+    throw new ApiError(403, "Parent account not linked");
+  }
+
+  if (preferredStudentId) {
+    const link = await prisma.parentStudentLink.findFirst({
+      where: {
+        parentId: parent.id,
+        studentId: preferredStudentId,
+        student: { schoolId, deletedAt: null, status: "ACTIVE" },
+      },
+      select: { studentId: true },
+    });
+    if (!link) {
+      throw new ApiError(403, "Forbidden");
+    }
+    return preferredStudentId;
+  }
+
+  const links = await prisma.parentStudentLink.findMany({
+    where: { parentId: parent.id, student: { schoolId, deletedAt: null, status: "ACTIVE" } },
+    select: { studentId: true, isPrimary: true },
+    orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+  });
+
+  if (links.length === 0) {
+    throw new ApiError(404, "No linked students found");
+  }
+
+  return links[0].studentId;
+}
+
+export async function getClassTeacherForUser(
+  schoolId: string,
+  actor: ActorContext,
+  studentIdFromQuery?: string
+): Promise<ClassTeacherInfo> {
+  if (!actor.userId || !actor.roleType) {
+    throw new ApiError(401, "Unauthorized");
+  }
+
+  let studentId: string;
+  if (actor.roleType === "STUDENT") {
+    const student = await prisma.student.findFirst({
+      where: { schoolId, userId: actor.userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new ApiError(403, "Student account not linked");
+    }
+    studentId = student.id;
+  } else if (actor.roleType === "PARENT") {
+    studentId = await resolveStudentIdForParent(
+      schoolId,
+      actor.userId,
+      studentIdFromQuery
+    );
+  } else {
+    throw new ApiError(403, "Forbidden");
+  }
+
+  const academicYearId = await getActiveAcademicYearId(schoolId);
+  const enrollment = await prisma.studentEnrollment.findFirst({
+    where: { studentId, academicYearId },
+    select: { sectionId: true },
+  });
+
+  if (!enrollment) {
+    throw new ApiError(404, "Student enrollment not found");
+  }
+
+  const section = await prisma.section.findFirst({
+    where: { id: enrollment.sectionId, deletedAt: null },
+    include: {
+      classTeacher: {
+        include: {
+          user: { select: { id: true, email: true, mobile: true } },
+        },
+      },
+    },
+  });
+
+  if (!section || !section.classTeacher) {
+    throw new ApiError(404, "Class teacher not assigned");
+  }
+
+  const teacher = section.classTeacher;
+
+  return {
+    teacherId: teacher.id,
+    userId: teacher.userId ?? teacher.user?.id ?? null,
+    fullName: teacher.fullName,
+    email: teacher.email ?? teacher.user?.email ?? null,
+    mobile: null,
+    photoUrl: toPublicUrl(teacher.photoUrl),
+  };
+}
+
 async function ensureRollNumberAvailable(params: {
   sectionId: string;
   rollNumber?: number | null;
@@ -175,6 +436,82 @@ async function ensureRollNumberAvailable(params: {
   if (existing) {
     throw new ApiError(409, "Roll number already exists in this section");
   }
+}
+
+export async function assignPendingRollNumbers(
+  client: DbClient,
+  params: { academicYearId: string; sectionId: string }
+) {
+  const max = await client.studentEnrollment.aggregate({
+    where: {
+      academicYearId: params.academicYearId,
+      sectionId: params.sectionId,
+      rollNumber: { not: null },
+    },
+    _max: { rollNumber: true },
+  });
+
+  let nextRoll = max._max.rollNumber ?? 0;
+
+  const pending = await client.studentEnrollment.findMany({
+    where: {
+      academicYearId: params.academicYearId,
+      sectionId: params.sectionId,
+      rollNumber: null,
+    },
+    select: { id: true, student: { select: { fullName: true } }, createdAt: true },
+    orderBy: [{ student: { fullName: "asc" } }, { createdAt: "asc" }],
+  });
+
+  let assignedCount = 0;
+  for (const enrollment of pending) {
+    nextRoll += 1;
+    await client.studentEnrollment.update({
+      where: { id: enrollment.id },
+      data: { rollNumber: nextRoll },
+    });
+    assignedCount += 1;
+  }
+
+  return assignedCount;
+}
+
+export async function assignRollNumbers(input: {
+  schoolId: string;
+  academicYearId: string;
+  sectionId?: string | null;
+  classId?: string | null;
+}) {
+  await ensureAcademicYearBelongsToSchool(input.schoolId, input.academicYearId);
+
+  if (input.sectionId) {
+    await ensureSectionBelongsToSchool(input.schoolId, input.sectionId);
+    const count = await assignPendingRollNumbers(prisma, {
+      academicYearId: input.academicYearId,
+      sectionId: input.sectionId,
+    });
+    return { assigned: count };
+  }
+
+  if (!input.classId) {
+    throw new ApiError(400, "sectionId or classId is required");
+  }
+
+  await ensureClassBelongsToSchool(input.schoolId, input.classId);
+  const sections = await prisma.section.findMany({
+    where: { classId: input.classId, deletedAt: null },
+    select: { id: true },
+  });
+
+  let total = 0;
+  for (const section of sections) {
+    total += await assignPendingRollNumbers(prisma, {
+      academicYearId: input.academicYearId,
+      sectionId: section.id,
+    });
+  }
+
+  return { assigned: total };
 }
 
 async function ensureEnrollmentIsValid(
@@ -337,6 +674,138 @@ async function getEnrollmentForStudent(
   });
 }
 
+async function resolveStudentIdsForTeacher(
+  schoolId: string,
+  userId: string
+): Promise<string[]> {
+  const teacher = await prisma.teacher.findFirst({
+    where: { schoolId, userId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!teacher) {
+    throw new ApiError(403, "Teacher account not linked");
+  }
+
+  const classTeacherSections = await prisma.section.findMany({
+    where: {
+      classTeacherId: teacher.id,
+      deletedAt: null,
+      class: { schoolId, deletedAt: null },
+    },
+    select: { id: true, classId: true },
+  });
+
+  const subjectAssignments = await prisma.teacherSubjectClass.findMany({
+    where: {
+      teacherId: teacher.id,
+      classSubject: {
+        class: { schoolId, deletedAt: null },
+        subject: { schoolId },
+      },
+    },
+    select: {
+      sectionId: true,
+      classSubject: { select: { classId: true } },
+    },
+  });
+
+  const sectionIds = new Set<string>();
+  classTeacherSections.forEach((section) => sectionIds.add(section.id));
+  subjectAssignments
+    .filter((assignment) => assignment.sectionId)
+    .forEach((assignment) => {
+      if (assignment.sectionId) {
+        sectionIds.add(assignment.sectionId);
+      }
+    });
+
+  const classIds = new Set<string>();
+  subjectAssignments
+    .filter((assignment) => !assignment.sectionId)
+    .forEach((assignment) => classIds.add(assignment.classSubject.classId));
+
+  if (classIds.size > 0) {
+    const extraSections = await prisma.section.findMany({
+      where: {
+        classId: { in: Array.from(classIds) },
+        deletedAt: null,
+        class: { schoolId, deletedAt: null },
+      },
+      select: { id: true },
+    });
+    extraSections.forEach((section) => sectionIds.add(section.id));
+  }
+
+  if (sectionIds.size === 0) {
+    return [];
+  }
+
+  const enrollments = await prisma.studentEnrollment.findMany({
+    where: {
+      sectionId: { in: Array.from(sectionIds) },
+      student: { schoolId, deletedAt: null },
+    },
+    select: { studentId: true },
+  });
+
+  return Array.from(new Set(enrollments.map((item) => item.studentId)));
+}
+
+async function resolveStudentScope(
+  schoolId: string,
+  actor?: ActorContext
+): Promise<{ studentIds?: string[] }> {
+  if (!actor?.roleType) {
+    return {};
+  }
+
+  if (actor.roleType === "STUDENT") {
+    if (!actor.userId) {
+      throw new ApiError(401, "Unauthorized");
+    }
+    const student = await prisma.student.findFirst({
+      where: { schoolId, userId: actor.userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new ApiError(403, "Student account not linked");
+    }
+    return { studentIds: [student.id] };
+  }
+
+  if (actor.roleType === "PARENT") {
+    if (!actor.userId) {
+      throw new ApiError(401, "Unauthorized");
+    }
+    const parent = await prisma.parent.findFirst({
+      where: { schoolId, userId: actor.userId },
+      select: { id: true },
+    });
+    if (!parent) {
+      throw new ApiError(403, "Parent account not linked");
+    }
+    const links = await prisma.parentStudentLink.findMany({
+      where: {
+        parentId: parent.id,
+        student: { schoolId, deletedAt: null, status: "ACTIVE" },
+      },
+      select: { studentId: true },
+    });
+    return { studentIds: links.map((link) => link.studentId) };
+  }
+
+  if (actor.roleType === "TEACHER") {
+    if (!actor.userId) {
+      throw new ApiError(401, "Unauthorized");
+    }
+    const studentIds = await resolveStudentIdsForTeacher(schoolId, actor.userId);
+    return { studentIds };
+  }
+
+  return {};
+}
+
 export async function createStudent(schoolId: string, payload: CreateStudentInput) {
   await ensureEnrollmentIsValid(schoolId, payload.enrollment);
   await ensureRollNumberAvailable({
@@ -346,8 +815,9 @@ export async function createStudent(schoolId: string, payload: CreateStudentInpu
 
   try {
     const studentId = await prisma.$transaction(async (tx) => {
+      const db = tx as DbClient;
       const parentInfo = await resolveParentId(
-        tx,
+        db,
         schoolId,
         payload.parentId,
         payload.parent
@@ -356,7 +826,7 @@ export async function createStudent(schoolId: string, payload: CreateStudentInpu
         throw new ApiError(400, "Parent information is required");
       }
 
-      const generated = await generateStudentNumbers(tx, schoolId);
+      const generated = await generateStudentNumbers(db, schoolId);
       const admissionNumber = payload.admissionNumber ?? generated.admissionNumber;
       const registrationNumber =
         payload.registrationNumber ?? generated.registrationNumber;
@@ -376,16 +846,16 @@ export async function createStudent(schoolId: string, payload: CreateStudentInpu
       });
 
       if (payload.profile) {
-        await upsertStudentProfile(tx, student.id, payload.profile);
+        await upsertStudentProfile(db, student.id, payload.profile);
       }
 
-      await ensureParentLink(tx, {
+      await ensureParentLink(db, {
         parentId: parentInfo.parentId,
         studentId: student.id,
         isPrimary: parentInfo.isPrimary,
       });
 
-      await tx.studentEnrollment.create({
+      const enrollment = await tx.studentEnrollment.create({
         data: {
           studentId: student.id,
           academicYearId: payload.enrollment.academicYearId,
@@ -399,6 +869,13 @@ export async function createStudent(schoolId: string, payload: CreateStudentInpu
 
       return student.id;
     });
+    try {
+      await notifyStudentClassAssignment(schoolId, studentId, payload.enrollment.classId, payload.enrollment.sectionId);
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.error("[notify] student class assignment failed", error);
+      }
+    }
     return getStudentById(schoolId, studentId);
   } catch (error) {
     mapPrismaError(error);
@@ -407,9 +884,33 @@ export async function createStudent(schoolId: string, payload: CreateStudentInpu
 
 export async function listStudents(
   schoolId: string,
-  pagination?: { skip: number; take: number }
+  pagination?: { skip: number; take: number },
+  actor?: ActorContext,
+  filters?: { classId?: string; sectionId?: string; academicYearId?: string }
 ) {
-  const where = { schoolId, deletedAt: null };
+  const scope = await resolveStudentScope(schoolId, actor);
+  if (scope.studentIds && scope.studentIds.length === 0) {
+    return { items: [], total: 0 };
+  }
+
+  const academicYearId = filters?.academicYearId ?? (await getActiveAcademicYearId(schoolId));
+
+  const enrollmentFilter: { classId?: string; sectionId?: string } = {};
+  if (filters?.classId) {
+    enrollmentFilter.classId = filters.classId;
+  }
+  if (filters?.sectionId) {
+    enrollmentFilter.sectionId = filters.sectionId;
+  }
+
+  const where = {
+    schoolId,
+    deletedAt: null,
+    ...(scope.studentIds ? { id: { in: scope.studentIds } } : {}),
+    ...(Object.keys(enrollmentFilter).length > 0
+      ? { enrollments: { some: { ...enrollmentFilter, academicYearId } } }
+      : { enrollments: { some: { academicYearId } } }),
+  };
 
   const [items, total] = await prisma.$transaction([
     prisma.student.findMany({
@@ -422,16 +923,42 @@ export async function listStudents(
           orderBy: { createdAt: "desc" },
         },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { fullName: "asc" },
       ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}),
     }),
     prisma.student.count({ where }),
   ]);
 
-  return { items, total };
+  const normalized = items.map((item) =>
+    shapeStudentForRole(item, actor?.roleType)
+  );
+
+  return { items: normalized, total };
 }
 
-export async function getStudentById(schoolId: string, id: string) {
+export async function getStudentById(
+  schoolId: string,
+  id: string,
+  actor?: ActorContext
+) {
+  if (actor?.roleType) {
+    const scope = await resolveStudentScope(schoolId, actor);
+    if (scope.studentIds && !scope.studentIds.includes(id)) {
+      throw new ApiError(403, "Forbidden: cannot access this student");
+    }
+  }
+
+  const activeAcademicYear = await prisma.academicYear.findFirst({
+    where: { schoolId, isActive: true },
+    select: { id: true },
+  });
+  if (activeAcademicYear) {
+    const activeEnrollment = await prisma.studentEnrollment.findFirst({
+      where: { studentId: id, academicYearId: activeAcademicYear.id },
+      select: { sectionId: true, rollNumber: true },
+    });
+  }
+
   const student = await prisma.student.findFirst({
     where: { id, schoolId, deletedAt: null },
     include: {
@@ -448,7 +975,30 @@ export async function getStudentById(schoolId: string, id: string) {
     throw new ApiError(404, "Student not found");
   }
 
-  return student;
+  try {
+    if (actor?.roleType === "STUDENT") {
+      const allowed = canAccessResource({
+        userId: actor.userId,
+        userRole: actor.roleType,
+        resourceOwnerId: student.userId,
+        allowedRoles: ["SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "FINANCE_SUB_ADMIN"],
+      });
+      if (!allowed) {
+        logSecurity("unauthorized_student_access", {
+          userId: actor.userId,
+          resourceId: student.id,
+        });
+        throw new ApiError(403, "Forbidden");
+      }
+    }
+  } catch (err) {
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    console.error("[Phase2] Access control error:", err);
+  }
+
+  return shapeStudentForRole(student, actor?.roleType);
 }
 
 export async function updateStudent(
@@ -456,7 +1006,17 @@ export async function updateStudent(
   id: string,
   payload: UpdateStudentInput
 ) {
-  await ensureStudentExists(schoolId, id);
+  const student = await ensureStudentExists(schoolId, id);
+  const previousEnrollment =
+    payload.enrollment?.academicYearId
+      ? await prisma.studentEnrollment.findFirst({
+          where: {
+            studentId: id,
+            academicYearId: payload.enrollment.academicYearId,
+          },
+          select: { classId: true, sectionId: true },
+        })
+      : null;
 
   if (payload.enrollment && !payload.enrollment.academicYearId) {
     throw new ApiError(400, "academicYearId is required to update enrollment");
@@ -464,13 +1024,14 @@ export async function updateStudent(
 
   try {
     await prisma.$transaction(async (tx) => {
+      const db = tx as DbClient;
       if (payload.profile) {
-        await upsertStudentProfile(tx, id, payload.profile);
+        await upsertStudentProfile(db, id, payload.profile);
       }
 
       if (payload.parentId || payload.parent) {
         const parentInfo = await resolveParentId(
-          tx,
+          db,
           schoolId,
           payload.parentId,
           payload.parent
@@ -478,7 +1039,7 @@ export async function updateStudent(
         if (!parentInfo.parentId) {
           throw new ApiError(400, "Parent information is required");
         }
-        await ensureParentLink(tx, {
+        await ensureParentLink(db, {
           parentId: parentInfo.parentId,
           studentId: id,
           isPrimary: parentInfo.isPrimary,
@@ -491,7 +1052,7 @@ export async function updateStudent(
           throw new ApiError(400, "academicYearId is required to update enrollment");
         }
 
-        const existing = await getEnrollmentForStudent(tx, id, academicYearId);
+        const existing = await getEnrollmentForStudent(db, id, academicYearId);
         const classId = payload.enrollment.classId ?? existing?.classId;
         const sectionId = payload.enrollment.sectionId ?? existing?.sectionId;
 
@@ -515,8 +1076,9 @@ export async function updateStudent(
           excludeId: existing?.id,
         });
 
+        let updatedEnrollmentId: string | null = null;
         if (existing) {
-          await tx.studentEnrollment.update({
+          const updatedEnrollment = await tx.studentEnrollment.update({
             where: { id: existing.id },
             data: {
               classId: enrollmentPayload.classId,
@@ -529,9 +1091,11 @@ export async function updateStudent(
                 ? { promotionStatus: payload.enrollment.promotionStatus }
                 : {}),
             },
+            select: { id: true, academicYearId: true, sectionId: true, rollNumber: true },
           });
+          updatedEnrollmentId = updatedEnrollment.id;
         } else {
-          await tx.studentEnrollment.create({
+          const createdEnrollment = await tx.studentEnrollment.create({
             data: {
               studentId: id,
               academicYearId: enrollmentPayload.academicYearId,
@@ -541,7 +1105,9 @@ export async function updateStudent(
               isDetained: payload.enrollment.isDetained ?? false,
               promotionStatus: payload.enrollment.promotionStatus,
             },
+            select: { id: true, academicYearId: true, sectionId: true, rollNumber: true },
           });
+          updatedEnrollmentId = createdEnrollment.id;
         }
       }
 
@@ -563,23 +1129,514 @@ export async function updateStudent(
           ...(payload.status !== undefined ? { status: payload.status } : {}),
         },
       });
+
+      if (payload.status !== undefined && student.userId) {
+        await tx.user.update({
+          where: { id: student.userId },
+          data: { isActive: payload.status === "ACTIVE" },
+        });
+      }
     });
   } catch (error) {
     mapPrismaError(error);
   }
 
+  if (payload.enrollment?.classId && payload.enrollment?.sectionId) {
+    const changed =
+      !previousEnrollment ||
+      previousEnrollment.classId !== payload.enrollment.classId ||
+      previousEnrollment.sectionId !== payload.enrollment.sectionId;
+    if (changed) {
+      try {
+        await notifyStudentClassAssignment(
+          schoolId,
+          id,
+          payload.enrollment.classId,
+          payload.enrollment.sectionId
+        );
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.error("[notify] student class assignment failed", error);
+        }
+      }
+    }
+  }
+
   return getStudentById(schoolId, id);
 }
 
-export async function deleteStudent(schoolId: string, id: string) {
-  await ensureStudentExists(schoolId, id);
+async function notifyStudentClassAssignment(
+  schoolId: string,
+  studentId: string,
+  classId: string,
+  sectionId: string
+) {
+  const [classRecord, sectionRecord] = await Promise.all([
+    prisma.class.findFirst({
+      where: { id: classId, schoolId, deletedAt: null },
+      select: { id: true, className: true },
+    }),
+    prisma.section.findFirst({
+      where: { id: sectionId, classId, deletedAt: null },
+      select: { id: true, sectionName: true },
+    }),
+  ]);
 
-  return prisma.student.update({
-    where: { id },
-    data: { deletedAt: new Date() },
+  await trigger("CLASS_ASSIGNED", {
+    schoolId,
+    studentId,
+    classId,
+    className: classRecord?.className,
+    sectionId,
+    sectionName: sectionRecord?.sectionName,
+  });
+}
+
+export async function deleteStudent(schoolId: string, id: string) {
+  const student = await ensureStudentExists(schoolId, id);
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.student.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+
+    if (student.userId) {
+      await tx.user.update({
+        where: { id: student.userId },
+        data: { isActive: false },
+      });
+    }
+
+    return updated;
   });
 }
 
 export async function getStudentTimetable(schoolId: string, studentId: string) {
   return listTimetableForStudent(schoolId, studentId);
+}
+
+type StudentIdCardData = {
+  school: {
+    name: string;
+    logoUrl: string | null;
+    address: string | null;
+    phone: string | null;
+  };
+  student: {
+    id: string;
+    fullName: string;
+    admissionNumber: string | null;
+    dateOfBirth: Date;
+    bloodGroup: string | null;
+    photoUrl: string | null;
+    address: string | null;
+  };
+  className: string | null;
+  sectionName: string | null;
+  classId: string | null;
+  sectionId: string | null;
+  rollNumber: number | null;
+  parentName: string | null;
+  parentPhone: string | null;
+  idCardLocks: { nameLocked: boolean; photoLocked: boolean };
+};
+
+function getIdCardLocks(info: unknown) {
+  if (!info || typeof info !== "object") {
+    return { nameLocked: false, photoLocked: false };
+  }
+  const record = info as { idCard?: { nameLocked?: boolean; photoLocked?: boolean } };
+  return {
+    nameLocked: Boolean(record.idCard?.nameLocked),
+    photoLocked: Boolean(record.idCard?.photoLocked),
+  };
+}
+
+function applyIdCardLocks(info: unknown, updates: { nameLocked?: boolean; photoLocked?: boolean }) {
+  const base = info && typeof info === "object" ? { ...(info as Record<string, unknown>) } : {};
+  const existing = base.idCard && typeof base.idCard === "object" ? { ...(base.idCard as Record<string, unknown>) } : {};
+  base.idCard = {
+    ...existing,
+    ...(updates.nameLocked !== undefined ? { nameLocked: updates.nameLocked } : {}),
+    ...(updates.photoLocked !== undefined ? { photoLocked: updates.photoLocked } : {}),
+  };
+  return base;
+}
+
+function mapStudentToIdCard(
+  school: { name: string; logoUrl: string | null; address: string | null; phone: string | null },
+  student: {
+    id: string;
+    fullName: string;
+    admissionNumber: string | null;
+    dateOfBirth: Date;
+    bloodGroup: string | null;
+    profile: { profilePhotoUrl: string | null; address: string | null; medicalInfo?: unknown } | null;
+    enrollments: Array<{
+      class: { className: string };
+      section: { sectionName: string };
+      classId?: string;
+      sectionId?: string;
+      rollNumber?: number | null;
+    }>;
+    parentLinks: Array<{ isPrimary: boolean; parent: { fullName: string; mobile: string } }>;
+  }
+): StudentIdCardData {
+  const enrollment = student.enrollments[0];
+  const parentLink = student.parentLinks.find((link) => link.isPrimary) ?? student.parentLinks[0];
+  const locks = getIdCardLocks(student.profile?.medicalInfo);
+
+  return {
+    school,
+    student: {
+      id: student.id,
+      fullName: student.fullName,
+      admissionNumber: student.admissionNumber ?? null,
+      dateOfBirth: student.dateOfBirth,
+      bloodGroup: student.bloodGroup ?? null,
+      photoUrl: toPublicUrl(student.profile?.profilePhotoUrl ?? null),
+      address: student.profile?.address ?? null,
+    },
+    className: enrollment?.class?.className ?? null,
+    sectionName: enrollment?.section?.sectionName ?? null,
+    classId: enrollment?.classId ?? null,
+    sectionId: enrollment?.sectionId ?? null,
+    rollNumber: enrollment?.rollNumber ?? null,
+    parentName: parentLink?.parent?.fullName ?? null,
+    parentPhone: parentLink?.parent?.mobile ?? null,
+    idCardLocks: locks,
+  };
+}
+
+export async function listStudentIdCardsForAdmin(
+  schoolId: string,
+  academicYearId?: string
+): Promise<StudentIdCardData[]> {
+  const resolvedAcademicYearId =
+    academicYearId ?? (await getActiveAcademicYearId(schoolId));
+  const school = await prisma.school.findUnique({
+    where: { id: schoolId },
+    select: { name: true, logoUrl: true, address: true, phone: true },
+  });
+
+  if (!school) {
+    throw new ApiError(404, "School not found");
+  }
+
+  const students = await prisma.student.findMany({
+    where: { schoolId, deletedAt: null },
+    select: {
+      id: true,
+      fullName: true,
+      admissionNumber: true,
+      dateOfBirth: true,
+      bloodGroup: true,
+      profile: { select: { profilePhotoUrl: true, address: true, medicalInfo: true } },
+      enrollments: {
+        where: { academicYearId: resolvedAcademicYearId },
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        select: {
+          classId: true,
+          sectionId: true,
+          rollNumber: true,
+          class: { select: { className: true } },
+          section: { select: { sectionName: true } },
+        },
+      },
+      parentLinks: {
+        orderBy: { isPrimary: "desc" },
+        select: {
+          isPrimary: true,
+          parent: { select: { fullName: true, mobile: true } },
+        },
+      },
+    },
+    orderBy: { fullName: "asc" },
+  });
+
+  return students.map((student) => mapStudentToIdCard(school, student));
+}
+
+export async function getStudentIdCardByStudentId(
+  schoolId: string,
+  studentId: string
+): Promise<StudentIdCardData> {
+  const academicYearId = await getActiveAcademicYearId(schoolId);
+  const school = await prisma.school.findUnique({
+    where: { id: schoolId },
+    select: { name: true, logoUrl: true, address: true, phone: true },
+  });
+
+  if (!school) {
+    throw new ApiError(404, "School not found");
+  }
+
+  const student = await prisma.student.findFirst({
+    where: { id: studentId, schoolId, deletedAt: null },
+    select: {
+      id: true,
+      fullName: true,
+      admissionNumber: true,
+      dateOfBirth: true,
+      bloodGroup: true,
+      profile: { select: { profilePhotoUrl: true, address: true, medicalInfo: true } },
+      enrollments: {
+        where: { academicYearId },
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        select: {
+          classId: true,
+          sectionId: true,
+          rollNumber: true,
+          class: { select: { className: true } },
+          section: { select: { sectionName: true } },
+        },
+      },
+      parentLinks: {
+        orderBy: { isPrimary: "desc" },
+        select: {
+          isPrimary: true,
+          parent: { select: { fullName: true, mobile: true } },
+        },
+      },
+    },
+  });
+
+  if (!student) {
+    throw new ApiError(404, "Student not found");
+  }
+
+  return mapStudentToIdCard(school, student);
+}
+
+export async function getStudentIdCardForStudentUser(
+  schoolId: string,
+  userId: string
+): Promise<StudentIdCardData> {
+  const student = await prisma.student.findFirst({
+    where: { schoolId, userId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!student) {
+    throw new ApiError(404, "Student not found");
+  }
+
+  return getStudentIdCardByStudentId(schoolId, student.id);
+}
+
+export async function getStudentIdCardForParentUser(
+  schoolId: string,
+  userId: string
+): Promise<StudentIdCardData> {
+  const parent = await prisma.parent.findFirst({
+    where: { schoolId, userId },
+    select: { id: true },
+  });
+
+  if (!parent) {
+    throw new ApiError(404, "Parent not linked");
+  }
+
+  const link = await prisma.parentStudentLink.findFirst({
+    where: { parentId: parent.id, student: { schoolId, deletedAt: null } },
+    orderBy: { isPrimary: "desc" },
+    select: { studentId: true },
+  });
+
+  if (!link) {
+    throw new ApiError(404, "No linked student found");
+  }
+
+  return getStudentIdCardByStudentId(schoolId, link.studentId);
+}
+
+export async function updateStudentIdCardName(
+  schoolId: string,
+  studentId: string,
+  fullName: string,
+  options: { lockAfter?: boolean; bypassLock?: boolean } = {}
+) {
+  const student = await prisma.student.findFirst({
+    where: { id: studentId, schoolId, deletedAt: null },
+    select: { id: true, profile: { select: { medicalInfo: true } } },
+  });
+
+  if (!student) {
+    throw new ApiError(404, "Student not found");
+  }
+
+  const locks = getIdCardLocks(student.profile?.medicalInfo);
+  if (!options.bypassLock && locks.nameLocked) {
+    throw new ApiError(403, "Name changes are locked. Contact admin to reset.");
+  }
+
+  await prisma.student.update({
+    where: { id: studentId },
+    data: { fullName },
+  });
+
+  if (options.lockAfter) {
+    const nextInfo = applyIdCardLocks(student.profile?.medicalInfo, { nameLocked: true });
+    await prisma.studentProfile.upsert({
+      where: { studentId },
+      create: { studentId, medicalInfo: nextInfo },
+      update: { medicalInfo: nextInfo },
+    });
+  }
+
+  return getStudentIdCardByStudentId(schoolId, studentId);
+}
+
+export async function updateStudentIdCardPhoto(
+  schoolId: string,
+  studentId: string,
+  photoUrl: string,
+  options: { lockAfter?: boolean; bypassLock?: boolean } = {}
+) {
+  const student = await prisma.student.findFirst({
+    where: { id: studentId, schoolId, deletedAt: null },
+    select: { id: true, profile: { select: { medicalInfo: true } } },
+  });
+
+  if (!student) {
+    throw new ApiError(404, "Student not found");
+  }
+
+  const locks = getIdCardLocks(student.profile?.medicalInfo);
+  if (!options.bypassLock && locks.photoLocked) {
+    throw new ApiError(403, "Photo changes are locked. Contact admin to reset.");
+  }
+
+  const nextInfo = options.lockAfter
+    ? applyIdCardLocks(student.profile?.medicalInfo, { photoLocked: true })
+    : student.profile?.medicalInfo ?? null;
+  await prisma.studentProfile.upsert({
+    where: { studentId },
+    create: { studentId, profilePhotoUrl: photoUrl, medicalInfo: nextInfo ?? undefined },
+    update: {
+      profilePhotoUrl: photoUrl,
+      ...(options.lockAfter ? { medicalInfo: nextInfo ?? undefined } : {}),
+    },
+  });
+
+  return getStudentIdCardByStudentId(schoolId, studentId);
+}
+
+export async function updateStudentIdCardDetailsAdmin(
+  schoolId: string,
+  studentId: string,
+  payload: {
+    fullName?: string;
+    admissionNumber?: string;
+    dateOfBirth?: Date;
+    bloodGroup?: string;
+    address?: string;
+    parentName?: string;
+    parentPhone?: string;
+    classId?: string;
+    sectionId?: string;
+    rollNumber?: number;
+  }
+) {
+  const academicYearId = await getActiveAcademicYearId(schoolId);
+  const student = await prisma.student.findFirst({
+    where: { id: studentId, schoolId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!student) {
+    throw new ApiError(404, "Student not found");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (payload.fullName || payload.admissionNumber || payload.dateOfBirth || payload.bloodGroup) {
+      await tx.student.update({
+        where: { id: studentId },
+        data: {
+          ...(payload.fullName !== undefined ? { fullName: payload.fullName } : {}),
+          ...(payload.admissionNumber !== undefined ? { admissionNumber: payload.admissionNumber } : {}),
+          ...(payload.dateOfBirth !== undefined ? { dateOfBirth: payload.dateOfBirth } : {}),
+          ...(payload.bloodGroup !== undefined ? { bloodGroup: payload.bloodGroup } : {}),
+        },
+      });
+    }
+
+    if (payload.address !== undefined) {
+      await tx.studentProfile.upsert({
+        where: { studentId },
+        create: { studentId, address: payload.address },
+        update: { address: payload.address },
+      });
+    }
+
+    if (payload.parentName !== undefined || payload.parentPhone !== undefined) {
+      const link = await tx.parentStudentLink.findFirst({
+        where: { studentId },
+        orderBy: { isPrimary: "desc" },
+        select: { parentId: true },
+      });
+      if (!link) {
+        throw new ApiError(400, "Parent not linked");
+      }
+      await tx.parent.update({
+        where: { id: link.parentId },
+        data: {
+          ...(payload.parentName !== undefined ? { fullName: payload.parentName } : {}),
+          ...(payload.parentPhone !== undefined ? { mobile: payload.parentPhone } : {}),
+        },
+      });
+    }
+
+    if (payload.classId || payload.sectionId || payload.rollNumber !== undefined) {
+      const existing = await tx.studentEnrollment.findFirst({
+        where: { studentId, academicYearId },
+        orderBy: { createdAt: "desc" },
+      });
+
+      const classId = payload.classId ?? existing?.classId;
+      const sectionId = payload.sectionId ?? existing?.sectionId;
+      if (!classId || !sectionId) {
+        throw new ApiError(400, "classId and sectionId are required");
+      }
+
+      await ensureEnrollmentIsValid(schoolId, {
+        academicYearId,
+        classId,
+        sectionId,
+        rollNumber: payload.rollNumber ?? existing?.rollNumber ?? undefined,
+      });
+
+      await ensureRollNumberAvailable({
+        sectionId,
+        rollNumber: payload.rollNumber ?? existing?.rollNumber ?? undefined,
+        excludeId: existing?.id,
+      });
+
+      if (existing) {
+        await tx.studentEnrollment.update({
+          where: { id: existing.id },
+          data: {
+            classId,
+            sectionId,
+            ...(payload.rollNumber !== undefined ? { rollNumber: payload.rollNumber } : {}),
+          },
+        });
+      } else {
+        await tx.studentEnrollment.create({
+          data: {
+            studentId,
+            academicYearId,
+            classId,
+            sectionId,
+            rollNumber: payload.rollNumber,
+          },
+        });
+      }
+    }
+  });
+
+  return getStudentIdCardByStudentId(schoolId, studentId);
 }

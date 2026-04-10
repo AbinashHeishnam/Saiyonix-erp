@@ -1,116 +1,71 @@
-import * as XLSX from "xlsx";
+import { Prisma } from "@prisma/client";
+import crypto from "node:crypto";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import {
-  studentBulkImportRowSchema,
-  type StudentBulkImportRowInput,
-} from "./validation";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { hashPassword } from "@/utils/password";
 
-type PrismaError = { code?: string; meta?: { target?: string[] | string } };
+const MAX_BULK_IMPORT_ROWS = 5000;
+const DEFAULT_PARENT_PASSWORD =
+  process.env.DEFAULT_PARENT_PASSWORD ?? crypto.randomBytes(18).toString("hex");
+
+const HEADER_KEYS = [
+  "full_name",
+  "registration_number",
+  "admission_number",
+  "date_of_birth",
+  "gender",
+  "blood_group",
+  "parent_mobile",
+  "parent_name",
+  "class_name",
+  "section_name",
+] as const;
+
+type HeaderKey = (typeof HEADER_KEYS)[number];
 
 type ParsedRow = {
   rowNumber: number;
-  data: StudentBulkImportRowInput;
+  data: Record<string, string>;
 };
 
 type NormalizedRow = {
   rowNumber: number;
   fullName: string;
+  registrationNumber: string;
+  admissionNumber?: string;
   dateOfBirth: Date;
   gender: string;
-  academicYearId: string;
-  classId: string;
-  sectionId: string;
-  parentName: string;
-  parentMobile: string;
-  parentEmail?: string;
-  relationToStudent?: string;
   bloodGroup?: string;
-  address?: string;
-  registrationNumber?: string;
-  admissionNumber?: string;
-  rollNumber?: number;
-  photoPath?: string;
+  parentMobile: string;
+  parentName?: string;
+  className: string;
+  sectionName: string;
+  raw: Record<string, string>;
 };
 
 type ImportError = {
-  rowNumber: number;
-  errors: string[];
+  row: number;
+  reason: string;
+  data: Record<string, string>;
 };
 
 type ImportResult = {
-  totalRows: number;
-  processed: number;
-  created: number;
-  failed: number;
-  errors: ImportError[];
+  successCount: number;
+  failureCount: number;
+  failures: ImportError[];
+  failedCsv: string;
 };
 
 type PreviewResult = {
   totalRows: number;
-  processed: number;
-  failed: number;
-  errors: ImportError[];
+  validRows: number;
+  invalidRows: ImportError[];
+  failedCsv: string;
 };
-
-type FileType = "csv" | "xlsx";
-
-type ImportOptions = {
-  batchSize: number;
-};
-
-const MAX_BULK_IMPORT_ROWS = 5000;
-
-const headerAliases: Record<string, keyof StudentBulkImportRowInput> = {
-  "full name": "fullName",
-  "fullname": "fullName",
-  "student name": "fullName",
-  "name": "fullName",
-  "date of birth": "dateOfBirth",
-  "dateofbirth": "dateOfBirth",
-  "dob": "dateOfBirth",
-  "gender": "gender",
-  "academic year id": "academicYearId",
-  "academicyearid": "academicYearId",
-  "class id": "classId",
-  "classid": "classId",
-  "section id": "sectionId",
-  "sectionid": "sectionId",
-  "parent name": "parentName",
-  "parentname": "parentName",
-  "guardian name": "parentName",
-  "parent mobile": "parentMobile",
-  "parentmobile": "parentMobile",
-  "parent phone": "parentMobile",
-  "parent email": "parentEmail",
-  "relation": "relationToStudent",
-  "relation to student": "relationToStudent",
-  "blood group": "bloodGroup",
-  "address": "address",
-  "registration number": "registrationNumber",
-  "registrationnumber": "registrationNumber",
-  "admission number": "admissionNumber",
-  "admissionnumber": "admissionNumber",
-  "roll number": "rollNumber",
-  "rollnumber": "rollNumber",
-  "photo path": "photoPath",
-  "photo": "photoPath",
-};
-
-const requiredHeaders: (keyof StudentBulkImportRowInput)[] = [
-  "fullName",
-  "dateOfBirth",
-  "gender",
-  "academicYearId",
-  "classId",
-  "sectionId",
-  "parentName",
-  "parentMobile",
-];
 
 function normalizeHeader(value: string) {
-  return value.trim().toLowerCase().replace(/[_\s]+/g, " ");
+  return value.trim().toLowerCase().replace(/[_\s]+/g, "");
 }
 
 function parseCsv(content: string) {
@@ -164,22 +119,6 @@ function parseCsv(content: string) {
   return rows;
 }
 
-function parseFile(buffer: Buffer, fileType: FileType) {
-  if (fileType === "csv") {
-    return parseCsv(buffer.toString("utf8"));
-  }
-
-  const workbook = XLSX.read(buffer, { type: "buffer" });
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-
-  return XLSX.utils.sheet_to_json<string[]>(sheet, {
-    header: 1,
-    defval: "",
-    raw: false,
-  });
-}
-
 function buildRows(rawRows: string[][]): ParsedRow[] {
   if (rawRows.length === 0) {
     throw new ApiError(400, "File is empty");
@@ -187,397 +126,248 @@ function buildRows(rawRows: string[][]): ParsedRow[] {
 
   const [headerRow, ...dataRows] = rawRows;
   const headers = headerRow.map((value) => normalizeHeader(String(value)));
-  const headerKeys = headers.map((header) => headerAliases[header]);
+  const headerKeys = headers.map((header) => {
+    const match = HEADER_KEYS.find((key) => normalizeHeader(key) === header);
+    return match ?? null;
+  });
 
-  const missingHeaders = requiredHeaders.filter(
-    (required) => !headerKeys.includes(required)
-  );
+  const required = [
+    "full_name",
+    "registration_number",
+    "date_of_birth",
+    "gender",
+    "parent_mobile",
+    "class_name",
+    "section_name",
+  ] as const;
 
-  if (missingHeaders.length > 0) {
-    throw new ApiError(
-      400,
-      `Missing required columns: ${missingHeaders.join(", ")}`
-    );
+  const missing = required.filter((key) => !headerKeys.includes(key));
+  if (missing.length > 0) {
+    throw new ApiError(400, `Missing required columns: ${missing.join(", ")}`);
+  }
+
+  if (dataRows.length > MAX_BULK_IMPORT_ROWS) {
+    throw new ApiError(400, `Maximum ${MAX_BULK_IMPORT_ROWS} rows allowed`);
   }
 
   return dataRows.map((rowValues, index) => {
     const rowData: Record<string, string> = {};
-
     rowValues.forEach((value, idx) => {
       const key = headerKeys[idx];
-      if (!key) {
-        return;
-      }
+      if (!key) return;
       rowData[key] = String(value ?? "").trim();
     });
-
-    return {
-      rowNumber: index + 2,
-      data: rowData as StudentBulkImportRowInput,
-    };
+    return { rowNumber: index + 2, data: rowData };
   });
 }
 
-function parseDate(value: string) {
-  const trimmed = value.trim();
-  if (trimmed.includes("/")) {
-    const [day, month, year] = trimmed.split("/").map((part) => Number(part));
-    if (!day || !month || !year) {
-      return null;
+function normalizePhone(input?: string) {
+  if (!input) return "";
+  return input.replace(/\D/g, "");
+}
+
+async function resolveAcademicYearId(schoolId: string, academicYearId?: string | null) {
+  if (academicYearId) {
+    const existing = await prisma.academicYear.findFirst({
+      where: { id: academicYearId, schoolId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new ApiError(400, "Academic year not found for this school");
     }
-    const parsed = new Date(year, month - 1, day);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
+    return existing.id;
   }
 
-  const parsed = new Date(trimmed);
+  const active = await prisma.academicYear.findFirst({
+    where: { schoolId, isActive: true },
+    select: { id: true },
+  });
+  if (!active) {
+    throw new ApiError(400, "Active academic year not found");
+  }
+  return active.id;
+}
+
+function parseIsoDate(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return null;
+  }
+  const parsed = new Date(`${trimmed}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function normalizeRows(rows: ParsedRow[]) {
-  const errors: ImportError[] = [];
-  const normalized: NormalizedRow[] = [];
-
-  for (const row of rows) {
-    const result = studentBulkImportRowSchema.safeParse(row.data);
-    if (!result.success) {
-      errors.push({
-        rowNumber: row.rowNumber,
-        errors: result.error.issues.map((issue) => issue.message),
-      });
-      continue;
-    }
-
-    const dateOfBirth = parseDate(result.data.dateOfBirth);
-    if (!dateOfBirth) {
-      errors.push({
-        rowNumber: row.rowNumber,
-        errors: ["Invalid dateOfBirth"],
-      });
-      continue;
-    }
-
-    const rollNumber = result.data.rollNumber
-      ? Number(result.data.rollNumber)
-      : undefined;
-
-    if (rollNumber !== undefined && Number.isNaN(rollNumber)) {
-      errors.push({
-        rowNumber: row.rowNumber,
-        errors: ["Invalid rollNumber"],
-      });
-      continue;
-    }
-
-    normalized.push({
-      rowNumber: row.rowNumber,
-      fullName: result.data.fullName,
-      dateOfBirth,
-      gender: result.data.gender,
-      academicYearId: result.data.academicYearId,
-      classId: result.data.classId,
-      sectionId: result.data.sectionId,
-      parentName: result.data.parentName,
-      parentMobile: result.data.parentMobile,
-      parentEmail: result.data.parentEmail,
-      relationToStudent: result.data.relationToStudent,
-      bloodGroup: result.data.bloodGroup,
-      address: result.data.address,
-      registrationNumber: result.data.registrationNumber,
-      admissionNumber: result.data.admissionNumber,
-      rollNumber: rollNumber ?? undefined,
-      photoPath: result.data.photoPath,
-    });
-  }
-
-  return { normalized, errors };
-}
-
-function addError(errors: ImportError[], rowNumber: number, message: string) {
-  const existing = errors.find((entry) => entry.rowNumber === rowNumber);
+function addError(errors: ImportError[], rowNumber: number, message: string, data: Record<string, string>) {
+  const existing = errors.find((entry) => entry.row === rowNumber);
   if (existing) {
-    existing.errors.push(message);
+    if (!existing.reason.includes(message)) {
+      existing.reason = `${existing.reason}; ${message}`;
+    }
     return;
   }
-  errors.push({ rowNumber, errors: [message] });
+  errors.push({ row: rowNumber, reason: message, data });
 }
 
-function detectDuplicates(
-  rows: NormalizedRow[],
-  errors: ImportError[]
-) {
-  const registrationMap = new Map<string, NormalizedRow[]>();
-  const admissionMap = new Map<string, NormalizedRow[]>();
+function detectCsvDuplicates(parsedRows: ParsedRow[], errors: ImportError[]) {
+  const registrationMap = new Map<string, ParsedRow[]>();
+  const admissionMap = new Map<string, ParsedRow[]>();
 
-  for (const row of rows) {
-    if (row.registrationNumber) {
-      const list = registrationMap.get(row.registrationNumber) ?? [];
+  parsedRows.forEach((row) => {
+    const registration = row.data.registration_number?.trim();
+    if (registration) {
+      const list = registrationMap.get(registration) ?? [];
       list.push(row);
-      registrationMap.set(row.registrationNumber, list);
+      registrationMap.set(registration, list);
     }
-    if (row.admissionNumber) {
-      const list = admissionMap.get(row.admissionNumber) ?? [];
+
+    const admission = row.data.admission_number?.trim();
+    if (admission) {
+      const list = admissionMap.get(admission) ?? [];
       list.push(row);
-      admissionMap.set(row.admissionNumber, list);
+      admissionMap.set(admission, list);
     }
-  }
-
-  for (const [value, list] of registrationMap.entries()) {
-    if (list.length > 1) {
-      list.forEach((row) =>
-        addError(errors, row.rowNumber, `Duplicate registrationNumber: ${value}`)
-      );
-    }
-  }
-
-  for (const [value, list] of admissionMap.entries()) {
-    if (list.length > 1) {
-      list.forEach((row) =>
-        addError(errors, row.rowNumber, `Duplicate admissionNumber: ${value}`)
-      );
-    }
-  }
-}
-
-function chunkRows<T>(rows: T[], batchSize: number) {
-  const batches: T[][] = [];
-  for (let i = 0; i < rows.length; i += batchSize) {
-    batches.push(rows.slice(i, i + batchSize));
-  }
-  return batches;
-}
-
-async function loadSchoolLookup(schoolId: string) {
-  const school = await prisma.school.findFirst({
-    where: { id: schoolId },
-    select: { id: true, code: true },
   });
 
-  if (!school) {
-    throw new ApiError(400, "School not found");
+  for (const [, rows] of registrationMap.entries()) {
+    if (rows.length > 1) {
+      rows.forEach((row) =>
+        addError(errors, row.rowNumber, "Duplicate registration_number in file", row.data)
+      );
+    }
   }
 
-  return school;
+  for (const [, rows] of admissionMap.entries()) {
+    if (rows.length > 1) {
+      rows.forEach((row) =>
+        addError(errors, row.rowNumber, "Duplicate admission_number in file", row.data)
+      );
+    }
+  }
 }
 
-async function validateReferences(schoolId: string, rows: NormalizedRow[]) {
-  const academicYearIds = Array.from(
-    new Set(rows.map((row) => row.academicYearId))
-  );
-  const classIds = Array.from(new Set(rows.map((row) => row.classId)));
-  const sectionIds = Array.from(new Set(rows.map((row) => row.sectionId)));
+async function getParentRoleId() {
+  const role = await prisma.role.findFirst({
+    where: { roleType: "PARENT" },
+    select: { id: true },
+  });
 
-  const [academicYears, classes, sections] = await Promise.all([
-    prisma.academicYear.findMany({
-      where: { schoolId, id: { in: academicYearIds } },
-      select: { id: true },
-    }),
-    prisma.class.findMany({
-      where: { schoolId, deletedAt: null, id: { in: classIds } },
-      select: { id: true, academicYearId: true },
-    }),
-    prisma.section.findMany({
-      where: {
-        id: { in: sectionIds },
-        deletedAt: null,
-        class: { schoolId, deletedAt: null },
-      },
-      select: { id: true, classId: true },
-    }),
-  ]);
-
-  const academicYearSet = new Set(academicYears.map((item) => item.id));
-  const classMap = new Map(classes.map((item) => [item.id, item]));
-  const sectionMap = new Map(sections.map((item) => [item.id, item]));
-
-  return { academicYearSet, classMap, sectionMap };
-}
-
-async function resolveExistingDuplicates(
-  schoolId: string,
-  rows: NormalizedRow[],
-  errors: ImportError[]
-) {
-  const registrationNumbers = rows
-    .map((row) => row.registrationNumber)
-    .filter((value): value is string => Boolean(value));
-  const admissionNumbers = rows
-    .map((row) => row.admissionNumber)
-    .filter((value): value is string => Boolean(value));
-
-  if (registrationNumbers.length > 0) {
-    const existing = await prisma.student.findMany({
-      where: { schoolId, registrationNumber: { in: registrationNumbers } },
-      select: { registrationNumber: true },
-    });
-    const existingSet = new Set(existing.map((item) => item.registrationNumber));
-    rows.forEach((row) => {
-      if (row.registrationNumber && existingSet.has(row.registrationNumber)) {
-        addError(errors, row.rowNumber, "Registration number already exists");
-      }
-    });
+  if (!role) {
+    throw new ApiError(500, "PARENT role missing");
   }
 
-  if (admissionNumbers.length > 0) {
-    const existing = await prisma.student.findMany({
-      where: { schoolId, admissionNumber: { in: admissionNumbers } },
-      select: { admissionNumber: true },
-    });
-    const existingSet = new Set(
-      existing.map((item) => item.admissionNumber).filter(Boolean)
+  return role.id;
+}
+
+function buildFailedCsv(errors: ImportError[]) {
+  const headers = [
+    "full_name",
+    "registration_number",
+    "admission_number",
+    "date_of_birth",
+    "gender",
+    "blood_group",
+    "parent_mobile",
+    "parent_name",
+    "class_name",
+    "section_name",
+    "error",
+  ];
+
+  const rows = errors.map((item) => {
+    const rowData = item.data ?? {};
+    const values = headers.slice(0, -1).map((key) =>
+      String(rowData[key] ?? "").replace(/"/g, '""')
     );
-    rows.forEach((row) => {
-      if (row.admissionNumber && existingSet.has(row.admissionNumber)) {
-        addError(errors, row.rowNumber, "Admission number already exists");
-      }
-    });
-  }
-}
-
-async function resolveExistingRollNumbers(rows: NormalizedRow[], errors: ImportError[]) {
-  const bySection = new Map<string, Set<number>>();
-  rows.forEach((row) => {
-    if (row.rollNumber) {
-      const set = bySection.get(row.sectionId) ?? new Set();
-      set.add(row.rollNumber);
-      bySection.set(row.sectionId, set);
-    }
+    values.push(String(item.reason ?? "").replace(/"/g, '""'));
+    return values.map((value) => `"${value}"`).join(",");
   });
 
-  for (const [sectionId, rollSet] of bySection.entries()) {
-    const existing = await prisma.studentEnrollment.findMany({
-      where: {
-        sectionId,
-        rollNumber: { in: Array.from(rollSet) },
-      },
-      select: { rollNumber: true },
-    });
-    const existingSet = new Set(existing.map((item) => item.rollNumber).filter(Boolean));
-
-    rows.forEach((row) => {
-      if (row.sectionId === sectionId && row.rollNumber) {
-        if (existingSet.has(row.rollNumber)) {
-          addError(errors, row.rowNumber, "Roll number already exists in section");
-        }
-      }
-    });
-  }
+  return [headers.join(","), ...rows].join("\n");
 }
 
-async function buildSequenceGenerator(schoolId: string, rows: NormalizedRow[]) {
-  const school = await loadSchoolLookup(schoolId);
-  const prefixReg = `${school.code}-REG-`;
-  const prefixAdm = `${school.code}-ADM-`;
+function normalizeRow(row: ParsedRow, errors: ImportError[]) {
+  const raw = row.data;
+  const fullName = raw.full_name?.trim();
+  const registrationNumber = raw.registration_number?.trim();
+  const admissionNumber = raw.admission_number?.trim() || undefined;
+  const dateOfBirth = raw.date_of_birth?.trim();
+  const gender = raw.gender?.trim();
+  const bloodGroup = raw.blood_group?.trim() || undefined;
+  const parentMobile = normalizePhone(raw.parent_mobile);
+  const parentName = raw.parent_name?.trim() || undefined;
+  const className = raw.class_name?.trim();
+  const sectionName = raw.section_name?.trim();
 
-  const existing = await prisma.student.findMany({
-    where: { schoolId },
-    select: { registrationNumber: true, admissionNumber: true },
-  });
-
-  const extractMax = (values: (string | null)[], prefix: string) => {
-    let max = 0;
-    values.forEach((value) => {
-      if (!value || !value.startsWith(prefix)) {
-        return;
-      }
-      const numeric = Number(value.slice(prefix.length));
-      if (!Number.isNaN(numeric)) {
-        max = Math.max(max, numeric);
-      }
-    });
-    return max;
-  };
-
-  const maxReg = extractMax(
-    existing.map((item) => item.registrationNumber),
-    prefixReg
-  );
-  const maxAdm = extractMax(
-    existing.map((item) => item.admissionNumber ?? null),
-    prefixAdm
-  );
-
-  let regCounter = maxReg + 1;
-  let admCounter = maxAdm + 1;
-
-  const pad = (value: number) => String(value).padStart(4, "0");
-
-  rows.forEach((row) => {
-    if (!row.registrationNumber) {
-      row.registrationNumber = `${prefixReg}${pad(regCounter)}`;
-      regCounter += 1;
-    }
-    if (!row.admissionNumber) {
-      row.admissionNumber = `${prefixAdm}${pad(admCounter)}`;
-      admCounter += 1;
-    }
-  });
-}
-
-async function assignRollNumbers(rows: NormalizedRow[]) {
-  const sectionIds = Array.from(new Set(rows.map((row) => row.sectionId)));
-  const rollMap = new Map<string, number>();
-
-  for (const sectionId of sectionIds) {
-    const existing = await prisma.studentEnrollment.aggregate({
-      where: { sectionId },
-      _max: { rollNumber: true },
-    });
-    rollMap.set(sectionId, (existing._max.rollNumber ?? 0) + 1);
+  if (!fullName) {
+    addError(errors, row.rowNumber, "full_name is required", raw);
+    return null;
+  }
+  if (!registrationNumber) {
+    addError(errors, row.rowNumber, "registration_number is required", raw);
+    return null;
+  }
+  if (!dateOfBirth) {
+    addError(errors, row.rowNumber, "date_of_birth is required", raw);
+    return null;
+  }
+  if (!gender) {
+    addError(errors, row.rowNumber, "gender is required", raw);
+    return null;
+  }
+  if (!parentMobile) {
+    addError(errors, row.rowNumber, "parent_mobile is required", raw);
+    return null;
+  }
+  if (!/^\d{10,15}$/.test(parentMobile)) {
+    addError(errors, row.rowNumber, "Invalid parent_mobile", raw);
+    return null;
   }
 
-  rows.forEach((row) => {
-    if (!row.rollNumber) {
-      const current = rollMap.get(row.sectionId) ?? 1;
-      row.rollNumber = current;
-      rollMap.set(row.sectionId, current + 1);
-    }
-  });
-}
-
-function mapBulkImportError(error: unknown): string[] {
-  const code =
-    error && typeof error === "object" && "code" in error
-      ? String((error as PrismaError).code ?? "")
-      : "";
-
-  if (code === "P2002") {
-    const target = (error as PrismaError).meta?.target ?? [];
-    const targetList = Array.isArray(target) ? target : [target];
-
-    if (targetList.includes("registrationNumber")) {
-      return ["Registration number already exists"];
-    }
-    if (targetList.includes("admissionNumber")) {
-      return ["Admission number already exists"];
-    }
-    if (targetList.includes("sectionId") && targetList.includes("rollNumber")) {
-      return ["Roll number already exists in section"];
-    }
-
-    return ["Duplicate record"];
+  const parsedDob = parseIsoDate(dateOfBirth);
+  if (!parsedDob) {
+    addError(errors, row.rowNumber, "Invalid date_of_birth format", raw);
+    return null;
+  }
+  if (!className) {
+    addError(errors, row.rowNumber, "class_name is required", raw);
+    return null;
+  }
+  if (!sectionName) {
+    addError(errors, row.rowNumber, "section_name is required", raw);
+    return null;
   }
 
-  if (code === "P2003") {
-    return ["Invalid relation reference"];
-  }
-
-  return ["Failed to import row due to transactional error"];
+  return {
+    rowNumber: row.rowNumber,
+    fullName,
+    registrationNumber,
+    admissionNumber,
+    dateOfBirth: parsedDob,
+    gender,
+    bloodGroup,
+    parentMobile,
+    parentName,
+    className,
+    sectionName,
+    raw,
+  } as NormalizedRow;
 }
 
-async function createRowWithChecks(
+async function importRow(
   schoolId: string,
-  row: NormalizedRow
-): Promise<{ created: boolean; errors?: string[] }> {
+  roleId: string,
+  passwordHash: string,
+  row: NormalizedRow,
+  academicYearId: string
+): Promise<{ created: boolean; error?: string }> {
   try {
-    return await prisma.$transaction(async (tx) => {
-      const errors: string[] = [];
-
+    await prisma.$transaction(async (tx) => {
       const existingRegistration = await tx.student.findFirst({
-        where: { schoolId, registrationNumber: row.registrationNumber! },
+        where: { schoolId, registrationNumber: row.registrationNumber },
         select: { id: true },
       });
       if (existingRegistration) {
-        errors.push("Registration number already exists");
+        throw new ApiError(409, "registration_number already exists");
       }
 
       if (row.admissionNumber) {
@@ -586,81 +376,113 @@ async function createRowWithChecks(
           select: { id: true },
         });
         if (existingAdmission) {
-          errors.push("Admission number already exists");
+          throw new ApiError(409, "admission_number already exists");
         }
       }
 
-      if (row.rollNumber) {
-        const existingRoll = await tx.studentEnrollment.findFirst({
-          where: {
-            sectionId: row.sectionId,
-            rollNumber: row.rollNumber,
-          },
-          select: { id: true },
-        });
-        if (existingRoll) {
-          errors.push("Roll number already exists in section");
-        }
+      const classRecord = await tx.class.findFirst({
+        where: {
+          schoolId,
+          academicYearId,
+          deletedAt: null,
+          className: { equals: row.className, mode: "insensitive" },
+        },
+        select: { id: true, academicYearId: true },
+      });
+
+      if (!classRecord) {
+        throw new ApiError(400, "Class not found");
       }
 
-      if (errors.length > 0) {
-        return { created: false, errors };
-      }
-
-      let parentId: string | null = null;
-      const existingParent = await tx.parent.findFirst({
-        where: { schoolId, mobile: row.parentMobile },
+      const sectionRecord = await tx.section.findFirst({
+        where: {
+          classId: classRecord.id,
+          deletedAt: null,
+          sectionName: { equals: row.sectionName, mode: "insensitive" },
+        },
         select: { id: true },
       });
 
-      if (existingParent) {
-        parentId = existingParent.id;
-      } else {
-        const createdParent = await tx.parent.create({
-          data: {
-            schoolId,
-            fullName: row.parentName,
-            mobile: row.parentMobile,
-            email: row.parentEmail,
-            relationToStudent: row.relationToStudent,
-          },
-          select: { id: true },
-        });
-        parentId = createdParent.id;
+      if (!sectionRecord) {
+        throw new ApiError(400, "Section not found in this class");
       }
 
       const student = await tx.student.create({
         data: {
           schoolId,
-          registrationNumber: row.registrationNumber!,
+          registrationNumber: row.registrationNumber,
           admissionNumber: row.admissionNumber,
           fullName: row.fullName,
           dateOfBirth: row.dateOfBirth,
           gender: row.gender,
           bloodGroup: row.bloodGroup,
+          status: "ACTIVE",
         },
         select: { id: true },
       });
 
-      if (row.address || row.photoPath) {
-        await tx.studentProfile.create({
+      let parent = await tx.parent.findFirst({
+        where: { schoolId, mobile: row.parentMobile },
+        select: { id: true, userId: true },
+      });
+
+      if (!parent) {
+        parent = await tx.parent.create({
           data: {
-            studentId: student.id,
-            address: row.address,
-            profilePhotoUrl: row.photoPath,
+            schoolId,
+            fullName: row.parentName || "Parent",
+            mobile: row.parentMobile,
+            relationToStudent: "PARENT",
           },
+          select: { id: true, userId: true },
         });
       }
 
+      let parentUser = await tx.user.findFirst({
+        where: { mobile: row.parentMobile },
+        select: { id: true, schoolId: true, role: { select: { roleType: true } } },
+      });
+
+      if (parentUser && parentUser.schoolId !== schoolId) {
+        throw new ApiError(409, "parent_mobile already used by another school");
+      }
+
+      if (parentUser?.role.roleType === "STUDENT") {
+        throw new ApiError(409, "parent_mobile already used by a student account");
+      }
+
+      if (!parentUser) {
+        parentUser = await tx.user.create({
+          data: {
+            schoolId,
+            roleId,
+            mobile: row.parentMobile,
+            passwordHash,
+            isActive: true,
+            isMobileVerified: false,
+          },
+          select: { id: true, schoolId: true, role: { select: { roleType: true } } },
+        });
+      }
+
+      if (!parent.userId) {
+        await tx.parent.update({
+          where: { id: parent.id },
+          data: { userId: parentUser.id },
+        });
+      } else if (parent.userId !== parentUser.id) {
+        throw new ApiError(409, "parent already linked to another user");
+      }
+
       const existingLink = await tx.parentStudentLink.findFirst({
-        where: { parentId: parentId!, studentId: student.id },
+        where: { parentId: parent.id, studentId: student.id },
         select: { id: true },
       });
 
       if (!existingLink) {
         await tx.parentStudentLink.create({
           data: {
-            parentId: parentId!,
+            parentId: parent.id,
             studentId: student.id,
             isPrimary: true,
           },
@@ -670,181 +492,149 @@ async function createRowWithChecks(
       await tx.studentEnrollment.create({
         data: {
           studentId: student.id,
-          academicYearId: row.academicYearId,
-          classId: row.classId,
-          sectionId: row.sectionId,
-          rollNumber: row.rollNumber,
+          academicYearId: classRecord.academicYearId,
+          classId: classRecord.id,
+          sectionId: sectionRecord.id,
         },
       });
-
-      return { created: true };
     });
+
+    return { created: true };
   } catch (error) {
-    return { created: false, errors: mapBulkImportError(error) };
+    if (error instanceof ApiError) {
+      return { created: false, error: error.message };
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2002") {
+        return { created: false, error: "Duplicate record" };
+      }
+    }
+    return { created: false, error: "Failed to import student" };
   }
 }
 
-export async function importStudentsFromFile(
+export function buildStudentImportTemplate() {
+  const header =
+    "full_name,registration_number,admission_number,date_of_birth,gender,blood_group,parent_mobile,parent_name,class_name,section_name";
+  const example =
+    "Aru Singh,REG-001,ADM-001,2012-04-15,FEMALE,O+,9876543210,Sunita Singh,Class 5,A";
+  return `${header}\n${example}`;
+}
+
+export async function previewStudentsFromCsv(
   schoolId: string,
   buffer: Buffer,
-  fileType: FileType,
-  options: ImportOptions
-): Promise<ImportResult> {
-  const rawRows = parseFile(buffer, fileType);
+  academicYearId?: string | null
+): Promise<PreviewResult> {
+  const rawRows = parseCsv(buffer.toString("utf8"));
   const parsedRows = buildRows(rawRows);
+  const errors: ImportError[] = [];
+  const resolvedAcademicYearId = await resolveAcademicYearId(schoolId, academicYearId);
 
-  if (parsedRows.length > MAX_BULK_IMPORT_ROWS) {
-    throw new ApiError(413, `Too many rows. Maximum allowed is ${MAX_BULK_IMPORT_ROWS}.`);
-  }
+  const normalized = parsedRows
+    .map((row) => normalizeRow(row, errors))
+    .filter((row): row is NormalizedRow => Boolean(row));
 
-  const { normalized, errors } = normalizeRows(parsedRows);
+  detectCsvDuplicates(parsedRows, errors);
 
-  if (normalized.length === 0) {
-    return {
-      totalRows: parsedRows.length,
-      processed: 0,
-      created: 0,
-      failed: errors.length,
-      errors,
-    };
-  }
+  if (normalized.length > 0) {
+    const registrationNumbers = normalized.map((row) => row.registrationNumber);
+    const existing = await prisma.student.findMany({
+      where: { schoolId, registrationNumber: { in: registrationNumbers } },
+      select: { registrationNumber: true },
+    });
+    const existingSet = new Set(existing.map((item) => item.registrationNumber));
+    normalized.forEach((row) => {
+      if (existingSet.has(row.registrationNumber)) {
+        addError(errors, row.rowNumber, "registration_number already exists", row.raw);
+      }
+    });
 
-  detectDuplicates(normalized, errors);
-
-  const { academicYearSet, classMap, sectionMap } = await validateReferences(
-    schoolId,
-    normalized
-  );
-
-  normalized.forEach((row) => {
-    if (!academicYearSet.has(row.academicYearId)) {
-      addError(errors, row.rowNumber, "Academic year not found for this school");
-    }
-
-    const classRecord = classMap.get(row.classId);
-    if (!classRecord) {
-      addError(errors, row.rowNumber, "Class not found for this school");
-    } else if (classRecord.academicYearId !== row.academicYearId) {
-      addError(errors, row.rowNumber, "Class does not belong to academic year");
-    }
-
-    const sectionRecord = sectionMap.get(row.sectionId);
-    if (!sectionRecord) {
-      addError(errors, row.rowNumber, "Section not found for this school");
-    } else if (sectionRecord.classId !== row.classId) {
-      addError(errors, row.rowNumber, "Section does not belong to class");
-    }
-  });
-
-  await resolveExistingDuplicates(schoolId, normalized, errors);
-  await resolveExistingRollNumbers(normalized, errors);
-
-  const errorRowSet = new Set(errors.map((entry) => entry.rowNumber));
-  const validRows = normalized.filter((row) => !errorRowSet.has(row.rowNumber));
-
-  if (validRows.length === 0) {
-    return {
-      totalRows: parsedRows.length,
-      processed: 0,
-      created: 0,
-      failed: errors.length,
-      errors,
-    };
-  }
-
-  await buildSequenceGenerator(schoolId, validRows);
-  await assignRollNumbers(validRows);
-
-  const batches = chunkRows(validRows, options.batchSize);
-  let created = 0;
-
-  for (const batch of batches) {
-    for (const row of batch) {
-      const result = await createRowWithChecks(schoolId, row);
-      if (result.created) {
-        created += 1;
+    for (const row of normalized) {
+      const classRecord = await prisma.class.findFirst({
+        where: {
+          schoolId,
+          academicYearId: resolvedAcademicYearId,
+          deletedAt: null,
+          className: { equals: row.className, mode: "insensitive" },
+        },
+        select: { id: true },
+      });
+      if (!classRecord) {
+        addError(errors, row.rowNumber, "Class not found", row.raw);
         continue;
       }
-
-      const rowErrors =
-        result.errors && result.errors.length > 0
-          ? result.errors
-          : ["Failed to import row due to transactional error"];
-      rowErrors.forEach((message) => addError(errors, row.rowNumber, message));
+      const sectionRecord = await prisma.section.findFirst({
+        where: {
+          classId: classRecord.id,
+          deletedAt: null,
+          sectionName: { equals: row.sectionName, mode: "insensitive" },
+        },
+        select: { id: true },
+      });
+      if (!sectionRecord) {
+        addError(errors, row.rowNumber, "Section not found in this class", row.raw);
+      }
     }
   }
 
-  const failed = errors.length;
+  const invalidRows = errors;
+  const invalidRowSet = new Set(invalidRows.map((row) => row.row));
+  const validRows = parsedRows.length - invalidRowSet.size;
 
   return {
     totalRows: parsedRows.length,
-    processed: validRows.length,
-    created,
-    failed,
-    errors,
+    validRows,
+    invalidRows,
+    failedCsv: buildFailedCsv(invalidRows),
   };
 }
 
-export async function previewStudentsFromFile(
+export async function importStudentsFromCsv(
   schoolId: string,
   buffer: Buffer,
-  fileType: FileType
-): Promise<PreviewResult> {
-  const rawRows = parseFile(buffer, fileType);
+  academicYearId?: string | null
+): Promise<ImportResult> {
+  const rawRows = parseCsv(buffer.toString("utf8"));
   const parsedRows = buildRows(rawRows);
+  const errors: ImportError[] = [];
+  const resolvedAcademicYearId = await resolveAcademicYearId(schoolId, academicYearId);
 
-  if (parsedRows.length > MAX_BULK_IMPORT_ROWS) {
-    throw new ApiError(413, `Too many rows. Maximum allowed is ${MAX_BULK_IMPORT_ROWS}.`);
+  const normalized = parsedRows
+    .map((row) => normalizeRow(row, errors))
+    .filter((row): row is NormalizedRow => Boolean(row));
+
+  detectCsvDuplicates(parsedRows, errors);
+
+  const invalidRowSet = new Set(errors.map((entry) => entry.row));
+
+  const roleId = await getParentRoleId();
+  const passwordHash = await hashPassword(DEFAULT_PARENT_PASSWORD);
+
+  let successCount = 0;
+
+  for (const row of normalized) {
+    if (invalidRowSet.has(row.rowNumber)) {
+      continue;
+    }
+    const result = await importRow(
+      schoolId,
+      roleId,
+      passwordHash,
+      row,
+      resolvedAcademicYearId
+    );
+    if (result.created) {
+      successCount += 1;
+      continue;
+    }
+    addError(errors, row.rowNumber, result.error ?? "Failed to import student", row.raw);
   }
-
-  const { normalized, errors } = normalizeRows(parsedRows);
-
-  if (normalized.length === 0) {
-    return {
-      totalRows: parsedRows.length,
-      processed: 0,
-      failed: errors.length,
-      errors,
-    };
-  }
-
-  detectDuplicates(normalized, errors);
-
-  const { academicYearSet, classMap, sectionMap } = await validateReferences(
-    schoolId,
-    normalized
-  );
-
-  normalized.forEach((row) => {
-    if (!academicYearSet.has(row.academicYearId)) {
-      addError(errors, row.rowNumber, "Academic year not found for this school");
-    }
-
-    const classRecord = classMap.get(row.classId);
-    if (!classRecord) {
-      addError(errors, row.rowNumber, "Class not found for this school");
-    } else if (classRecord.academicYearId !== row.academicYearId) {
-      addError(errors, row.rowNumber, "Class does not belong to academic year");
-    }
-
-    const sectionRecord = sectionMap.get(row.sectionId);
-    if (!sectionRecord) {
-      addError(errors, row.rowNumber, "Section not found for this school");
-    } else if (sectionRecord.classId !== row.classId) {
-      addError(errors, row.rowNumber, "Section does not belong to class");
-    }
-  });
-
-  await resolveExistingDuplicates(schoolId, normalized, errors);
-  await resolveExistingRollNumbers(normalized, errors);
-
-  const errorRowSet = new Set(errors.map((entry) => entry.rowNumber));
-  const validRows = normalized.filter((row) => !errorRowSet.has(row.rowNumber));
 
   return {
-    totalRows: parsedRows.length,
-    processed: validRows.length,
-    failed: errors.length,
-    errors,
+    successCount,
+    failureCount: errors.length,
+    failures: errors,
+    failedCsv: buildFailedCsv(errors),
   };
 }

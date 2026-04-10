@@ -1,17 +1,19 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMetaWithSync, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMetaWithSync, parsePagination } from "@/utils/pagination";
 import {
   createNotice as createNoticeService,
   deleteNotice as deleteNoticeService,
   getNoticeById as getNoticeByIdService,
+  getNoticeForActor as getNoticeForActorService,
   listNotices as listNoticesService,
+  listNoticesForActor as listNoticesForActorService,
   updateNotice as updateNoticeService,
-} from "./service";
-import { noticeIdSchema } from "./validation";
+} from "@/modules/noticeBoard/service";
+import { noticeIdSchema } from "@/modules/noticeBoard/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {
@@ -89,6 +91,9 @@ export async function create(req: AuthRequest, res: Response, next: NextFunction
 export async function list(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const schoolId = getSchoolId(req);
+    if ("page" in req.query || "limit" in req.query) {
+      console.log("[Phase1] Pagination applied");
+    }
     const pagination = parsePagination(req.query);
     const noticeType =
       typeof req.query.noticeType === "string" ? req.query.noticeType : undefined;
@@ -116,11 +121,61 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
   }
 }
 
+export async function listMe(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    if ("page" in req.query || "limit" in req.query) {
+      console.log("[Phase1] Pagination applied");
+    }
+    const pagination = parsePagination(req.query);
+    const active = parseBoolean(req.query.active);
+    const userId = req.user?.sub;
+    const roleType = req.user?.roleType;
+
+    if (!userId || !roleType) {
+      throw new ApiError(401, "Unauthorized");
+    }
+
+    const { items, total } = await listNoticesForActorService(
+      schoolId,
+      { userId, roleType },
+      pagination,
+      { active }
+    );
+
+    return success(
+      res,
+      items,
+      "Notices fetched successfully",
+      200,
+      buildPaginationMetaWithSync(total, pagination)
+    );
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export async function getById(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const schoolId = getSchoolId(req);
     const id = parseId(req.params.id);
     const data = await getNoticeByIdService(schoolId, id);
+    return success(res, data, "Notice fetched successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getMeById(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    const id = parseId(req.params.id);
+    const userId = req.user?.sub;
+    const roleType = req.user?.roleType;
+    if (!userId || !roleType) {
+      throw new ApiError(401, "Unauthorized");
+    }
+    const data = await getNoticeForActorService(schoolId, id, { userId, roleType });
     return success(res, data, "Notice fetched successfully");
   } catch (error) {
     return next(error);

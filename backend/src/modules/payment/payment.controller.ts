@@ -1,12 +1,21 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
+import { ApiError } from "@/core/errors/apiError";
+import prisma from "@/core/db/prisma";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
+import { getRazorpayConfig } from "@/core/config/externalServices";
 import {
   createPaymentOrder,
+  createPaymentLog,
+  createManualPayment,
+  generateAdminReceiptPdf,
+  listPayments,
+  listPaymentLogs,
   verifyPaymentSignature,
-} from "./payment.service";
+} from "@/modules/payment/payment.service";
+import { manualPaymentSchema } from "@/modules/payment/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {
@@ -16,6 +25,70 @@ function getSchoolId(req: AuthRequest) {
   return req.schoolId;
 }
 
+function getActor(req: AuthRequest) {
+  if (!req.user?.sub || !req.user?.roleType) {
+    throw new ApiError(401, "Unauthorized");
+  }
+
+  return { userId: req.user.sub, roleType: req.user.roleType };
+}
+
+async function resolveStudentId(
+  schoolId: string,
+  actor: { userId: string; roleType: string },
+  studentIdParam?: string | null
+) {
+  if (actor.roleType === "STUDENT") {
+    const student = await prisma.student.findFirst({
+      where: { schoolId, userId: actor.userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new ApiError(403, "Student account not linked");
+    }
+    return student.id;
+  }
+
+  if (actor.roleType === "PARENT") {
+    if (!studentIdParam) {
+      throw new ApiError(400, "studentId is required for parent access");
+    }
+    const link = await prisma.parentStudentLink.findFirst({
+      where: {
+        studentId: studentIdParam,
+        parent: {
+          is: { userId: actor.userId, schoolId },
+        },
+        student: { schoolId, deletedAt: null },
+      },
+      select: { studentId: true },
+    });
+    if (!link) {
+      throw new ApiError(403, "Parent is not linked to this student");
+    }
+    return link.studentId;
+  }
+
+  if (!studentIdParam) {
+    return null;
+  }
+
+  return studentIdParam;
+}
+
+async function getActiveAcademicYearId(schoolId: string) {
+  const academicYear = await prisma.academicYear.findFirst({
+    where: { schoolId, isActive: true },
+    select: { id: true },
+  });
+
+  if (!academicYear) {
+    throw new ApiError(404, "Active academic year not found");
+  }
+
+  return academicYear.id;
+}
+
 export async function createOrder(
   req: AuthRequest,
   res: Response,
@@ -23,14 +96,42 @@ export async function createOrder(
 ) {
   try {
     const schoolId = getSchoolId(req);
-    const data = await createPaymentOrder({
-      ...req.body,
-      metadata: {
-        ...(req.body?.metadata ?? {}),
-        schoolId,
+    const actor = getActor(req);
+    const resolvedStudentId = await resolveStudentId(
+      schoolId,
+      actor,
+      req.body?.studentId ?? null
+    );
+
+    const data = await createPaymentOrder(
+      {
+        ...req.body,
+        ...(resolvedStudentId ? { studentId: resolvedStudentId } : {}),
+        metadata: {
+          ...(req.body?.metadata ?? {}),
+          schoolId,
+        },
       },
-    });
+      schoolId
+    );
     return success(res, data, "Payment order created", 201);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getRazorpayKey(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const config = await getRazorpayConfig();
+    return success(
+      res,
+      { keyId: config.keyId ?? null },
+      "Razorpay key fetched"
+    );
   } catch (error) {
     return next(error);
   }
@@ -42,12 +143,165 @@ export async function verify(
   next: NextFunction
 ) {
   try {
-    getSchoolId(req);
-    const isValid = verifyPaymentSignature(req.body);
-    if (!isValid) {
-      throw new ApiError(400, "Invalid payment signature");
+    const schoolId = getSchoolId(req);
+    const actor = getActor(req);
+    const resolvedStudentId = await resolveStudentId(
+      schoolId,
+      actor,
+      req.body?.studentId ?? null
+    );
+
+    if (!resolvedStudentId) {
+      throw new ApiError(400, "studentId is required");
     }
+
+    const academicYearId =
+      req.body?.academicYearId ?? (await getActiveAcademicYearId(schoolId));
+
+    const student = await prisma.student.findFirst({
+      where: { id: resolvedStudentId, schoolId, deletedAt: null },
+      select: { fullName: true, registrationNumber: true },
+    });
+    if (!student) {
+      throw new ApiError(404, "Student not found");
+    }
+
+    const enrollment = await prisma.studentEnrollment.findFirst({
+      where: { studentId: resolvedStudentId, academicYearId },
+      select: { rollNumber: true },
+    });
+
+    const rollNumber =
+      enrollment?.rollNumber !== null && enrollment?.rollNumber !== undefined
+        ? String(enrollment.rollNumber)
+        : student.registrationNumber ?? "—";
+
+    let isValid = false;
+    let errorMessage: string | null = null;
+
+    try {
+      isValid = await verifyPaymentSignature(req.body);
+      if (!isValid) {
+        errorMessage = req.body?.errorMessage ?? "Invalid payment signature";
+      }
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "Payment verification failed";
+    }
+
+    await createPaymentLog({
+      studentId: resolvedStudentId,
+      studentName: student.fullName,
+      rollNumber,
+      amount: req.body.amount,
+      transactionId: req.body.razorpayPaymentId ?? null,
+      status: isValid ? "SUCCESS" : "FAILED",
+      method: "RAZORPAY",
+      errorMessage: isValid ? null : errorMessage ?? "Payment verification failed",
+    });
+
+    if (!isValid) {
+      throw new ApiError(400, errorMessage ?? "Invalid payment signature");
+    }
+
     return success(res, { verified: true }, "Payment verified");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function list(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    const pagination = parsePagination(req.query);
+    const { items, total } = await listPayments(schoolId, pagination);
+    return success(
+      res,
+      items,
+      "Payments fetched successfully",
+      200,
+      buildPaginationMeta(total, pagination)
+    );
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function listLogs(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const dateFromValue = typeof req.query?.dateFrom === "string" ? new Date(req.query.dateFrom) : null;
+    const dateToValue = typeof req.query?.dateTo === "string" ? new Date(req.query.dateTo) : null;
+
+    if (dateFromValue && Number.isNaN(dateFromValue.getTime())) {
+      throw new ApiError(400, "Invalid dateFrom");
+    }
+    if (dateToValue && Number.isNaN(dateToValue.getTime())) {
+      throw new ApiError(400, "Invalid dateTo");
+    }
+
+    const data = await listPaymentLogs(schoolId, {
+      studentName: typeof req.query?.studentName === "string" ? req.query.studentName : null,
+      studentId: typeof req.query?.studentId === "string" ? req.query.studentId : null,
+      status: typeof req.query?.status === "string" ? req.query.status : null,
+      dateFrom: dateFromValue,
+      dateTo: dateToValue,
+    });
+    return success(res, data, "Payment logs fetched successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function downloadAdminReceipt(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const paymentIdParam = req.params?.paymentId;
+    const paymentId = Array.isArray(paymentIdParam) ? paymentIdParam[0] : paymentIdParam;
+    if (!paymentId) {
+      throw new ApiError(400, "paymentId is required");
+    }
+
+    const pdfBuffer = await generateAdminReceiptPdf({ schoolId, paymentId });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="receipt_${paymentId}.pdf"`
+    );
+    return res.status(200).send(pdfBuffer);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function createManualPaymentRecord(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const actor = getActor(req);
+    const parsed = manualPaymentSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new ApiError(400, "Invalid payload");
+    }
+
+    const data = await createManualPayment({
+      ...parsed.data,
+      schoolId,
+      actorUserId: actor.userId,
+    });
+
+    return success(res, data, "Manual payment recorded successfully", 201);
   } catch (error) {
     return next(error);
   }

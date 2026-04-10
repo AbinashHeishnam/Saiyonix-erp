@@ -1,9 +1,9 @@
 import type { Express, NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { processBulkPhotoZip } from "./service";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { processBulkPhotoZip } from "@/modules/bulkPhotoUpload/service";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {

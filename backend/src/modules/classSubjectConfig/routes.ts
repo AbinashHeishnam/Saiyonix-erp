@@ -1,0 +1,43 @@
+import { Router } from "express";
+
+import { authMiddleware } from "@/middleware/auth.middleware";
+import { allowRoles } from "@/middleware/rbac.middleware";
+import { requirePermission } from "@/middleware/permission.middleware";
+import { validate } from "@/middleware/validate.middleware";
+import { copyFromPreviousYear, getByClass, upsert } from "@/modules/classSubjectConfig/controller";
+import {
+  classSubjectConfigQuerySchema,
+  copyClassSubjectConfigSchema,
+  upsertClassSubjectConfigSchema,
+} from "@/modules/classSubjectConfig/validation";
+
+const router = Router();
+
+router.get(
+  "/",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  requirePermission("classSubject:read"),
+  validate({ query: classSubjectConfigQuerySchema }),
+  getByClass
+);
+
+router.post(
+  "/",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  requirePermission("classSubject:update"),
+  validate(upsertClassSubjectConfigSchema),
+  upsert
+);
+
+router.post(
+  "/copy-from-previous-year",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  requirePermission("classSubject:update"),
+  validate(copyClassSubjectConfigSchema),
+  copyFromPreviousYear
+);
+
+export default router;

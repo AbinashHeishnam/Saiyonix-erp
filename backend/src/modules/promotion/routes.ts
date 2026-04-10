@@ -1,0 +1,143 @@
+import { Router } from "express";
+
+import { authMiddleware } from "@/middleware/auth.middleware";
+import { allowRoles } from "@/middleware/rbac.middleware";
+import { validate } from "@/middleware/validate.middleware";
+import {
+  generate,
+  list,
+  override,
+  reviewOverride,
+  publish,
+  applyFinal,
+  getCriteria,
+  upsertCriteria,
+  studentStatus,
+  parentStatus,
+  assignRollNumbersHandler,
+  rollNumberStatus,
+  preview,
+  transitions,
+} from "@/modules/promotion/controller";
+import {
+  generatePromotionSchema,
+  listPromotionSchema,
+  overridePromotionSchema,
+  reviewPromotionOverrideSchema,
+  promotionCriteriaSchema,
+  publishPromotionSchema,
+  applyFinalPromotionSchema,
+  assignRollNumbersSchema,
+  previewPromotionSchema,
+  promotionTransitionSchema,
+} from "@/modules/promotion/validation";
+
+const promotionRouter = Router();
+
+promotionRouter.post(
+  "/promotion/criteria",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  validate(promotionCriteriaSchema),
+  upsertCriteria
+);
+
+promotionRouter.get(
+  "/promotion/criteria",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  getCriteria
+);
+
+promotionRouter.post(
+  "/promotion/generate",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  validate(generatePromotionSchema),
+  generate
+);
+promotionRouter.post(
+  "/promotion/preview",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  validate(previewPromotionSchema),
+  preview
+);
+
+promotionRouter.get(
+  "/promotion/list",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN", "TEACHER"),
+  validate({ query: listPromotionSchema }),
+  list
+);
+
+promotionRouter.post(
+  "/promotion/override",
+  authMiddleware,
+  allowRoles("TEACHER", "ADMIN", "ACADEMIC_SUB_ADMIN"),
+  validate(overridePromotionSchema),
+  override
+);
+
+promotionRouter.post(
+  "/promotion/override/review",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  validate(reviewPromotionOverrideSchema),
+  reviewOverride
+);
+
+promotionRouter.post(
+  "/promotion/publish",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  validate(publishPromotionSchema),
+  publish
+);
+
+promotionRouter.post(
+  "/promotion/apply-final",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  validate(applyFinalPromotionSchema),
+  applyFinal
+);
+promotionRouter.get(
+  "/promotion/transitions",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  validate({ query: promotionTransitionSchema }),
+  transitions
+);
+
+promotionRouter.get(
+  "/promotion/assign-roll-numbers/status",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  rollNumberStatus
+);
+
+promotionRouter.post(
+  "/promotion/assign-roll-numbers",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"),
+  validate(assignRollNumbersSchema),
+  assignRollNumbersHandler
+);
+
+promotionRouter.get(
+  "/promotion/student",
+  authMiddleware,
+  allowRoles("STUDENT"),
+  studentStatus
+);
+
+promotionRouter.get(
+  "/promotion/parent",
+  authMiddleware,
+  allowRoles("PARENT"),
+  parentStatus
+);
+
+export default promotionRouter;

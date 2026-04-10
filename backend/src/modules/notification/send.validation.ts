@@ -27,6 +27,10 @@ const baseSendSchema = z.object({
   targetType: notificationTargetSchema,
   classId: z.string().uuid().optional(),
   sectionId: z.string().uuid().optional(),
+  linkUrl: z.string().trim().min(1).optional(),
+  entityType: z.string().trim().min(1).optional(),
+  entityId: z.string().trim().min(1).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 function validateTargeting(data: z.infer<typeof baseSendSchema>) {

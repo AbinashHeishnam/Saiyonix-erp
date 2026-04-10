@@ -4,11 +4,12 @@ import { authMiddleware } from "../../middleware/auth.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { validate } from "../../middleware/validate.middleware";
-import { create, getByTeacherId, update } from "./controller";
+import { create, getByTeacherId, list, update } from "@/modules/teacherProfile/controller";
 import {
   createTeacherProfileSchema,
+  teacherProfileTeacherIdParamSchema,
   updateTeacherProfileSchema,
-} from "./validation";
+} from "@/modules/teacherProfile/validation";
 
 const teacherProfileRouter = Router();
 
@@ -22,10 +23,19 @@ teacherProfileRouter.post(
 );
 
 teacherProfileRouter.get(
+  "/",
+  authMiddleware,
+  allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
+  requirePermission("teacher:read"),
+  list
+);
+
+teacherProfileRouter.get(
   "/:teacherId",
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("teacher:read"),
+  validate({ params: teacherProfileTeacherIdParamSchema }),
   getByTeacherId
 );
 
@@ -34,7 +44,7 @@ teacherProfileRouter.patch(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("teacher:update"),
-  validate(updateTeacherProfileSchema),
+  validate({ params: teacherProfileTeacherIdParamSchema, body: updateTeacherProfileSchema }),
   update
 );
 

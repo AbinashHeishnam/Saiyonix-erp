@@ -8,10 +8,9 @@ export function requestIdMiddleware(
 ) {
   const requestId = uuidv4();
 
-  req.headers["x-request-id"] = requestId;
+  (req as Request & { requestId?: string }).requestId = requestId;
 
   res.setHeader("X-Request-ID", requestId);
 
   next();
 }
-

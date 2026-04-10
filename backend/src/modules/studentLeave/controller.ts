@@ -1,19 +1,21 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMetaWithSync, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMetaWithSync, parsePagination } from "@/utils/pagination";
 import {
+  adminUpdateStudentLeaveStatus as adminUpdateStudentLeaveStatusService,
   approveStudentLeave as approveStudentLeaveService,
+  applyStudentLeave as applyStudentLeaveService,
   cancelStudentLeave as cancelStudentLeaveService,
   createStudentLeave as createStudentLeaveService,
   getStudentLeaveById as getStudentLeaveByIdService,
   getStudentLeaveTimeline as getStudentLeaveTimelineService,
   listStudentLeaves as listStudentLeavesService,
   rejectStudentLeave as rejectStudentLeaveService,
-} from "./service";
-import { studentLeaveIdSchema } from "./validation";
+} from "@/modules/studentLeave/service";
+import { studentLeaveIdSchema } from "@/modules/studentLeave/validation";
 
 function getSchoolId(req: AuthRequest): string {
   if (!req.schoolId) {
@@ -62,7 +64,55 @@ export async function create(
   }
 }
 
+export async function apply(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<Response | void> {
+  try {
+    const schoolId = getSchoolId(req);
+    const actor = getActor(req);
+    const uploadedFile = (req as AuthRequest & { uploadedFile?: { fileUrl: string } })
+      .uploadedFile;
+    const payload = {
+      ...req.body,
+      attachmentUrl: uploadedFile?.fileUrl ?? req.body?.attachmentUrl,
+    };
+    const data = await applyStudentLeaveService(schoolId, payload, actor);
+    return success(res, data, "Leave request created successfully", 201);
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export async function list(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<Response | void> {
+  try {
+    const schoolId = getSchoolId(req);
+    const actor = getActor(req);
+    const pagination = parsePagination(req.query);
+    const { items, total } = await listStudentLeavesService(
+      schoolId,
+      actor,
+      pagination
+    );
+
+    return success(
+      res,
+      items,
+      "Leave requests fetched successfully",
+      200,
+      buildPaginationMetaWithSync(total, pagination)
+    );
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function myLeaves(
   req: AuthRequest,
   res: Response,
   next: NextFunction
@@ -132,6 +182,28 @@ export async function reject(
     const id = parseId(req.params.id);
     const data = await rejectStudentLeaveService(schoolId, id, actor);
     return success(res, data, "Leave request rejected successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function adminUpdate(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<Response | void> {
+  try {
+    const schoolId = getSchoolId(req);
+    const actor = getActor(req);
+    const id = parseId(req.params.id);
+    const data = await adminUpdateStudentLeaveStatusService(
+      schoolId,
+      id,
+      actor,
+      req.body.status,
+      req.body.remarks
+    );
+    return success(res, data, "Leave request updated successfully");
   } catch (error) {
     return next(error);
   }

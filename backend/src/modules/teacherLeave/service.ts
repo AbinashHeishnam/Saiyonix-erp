@@ -1,11 +1,13 @@
 import { LeaveStatus, Prisma } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import { normalizeDate } from "../../core/utils/date";
-import { logAudit } from "../../utils/audit";
-import { trigger as triggerNotification } from "../notification/service";
-import type { CreateTeacherLeaveInput } from "./validation";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { normalizeDate } from "@/core/utils/date";
+import { safeRedisDel } from "@/core/cache/invalidate";
+import { logAudit } from "@/utils/audit";
+import { trigger as triggerNotification } from "@/modules/notification/service";
+import { generateSubstitutions } from "@/modules/substitution/service";
+import type { ApplyTeacherLeaveInput, CreateTeacherLeaveInput } from "@/modules/teacherLeave/validation";
 
 type ActorContext = {
   userId?: string;
@@ -15,6 +17,13 @@ type ActorContext = {
 type LeaveScope =
   | { type: "ALL" }
   | { type: "TEACHER_ID"; teacherId: string };
+
+function toSecureFileUrl(value?: string | null) {
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith("/api/v1/files/secure")) return value;
+  return `/api/v1/files/secure?fileUrl=${encodeURIComponent(value)}`;
+}
 
 function ensureActor(actor: ActorContext): { userId: string; roleType: string } {
   if (!actor.userId || !actor.roleType) {
@@ -74,7 +83,7 @@ async function resolveTeacherLeaveScope(
 ): Promise<LeaveScope> {
   const { userId, roleType } = ensureActor(actor);
 
-  if (roleType === "ADMIN" || roleType === "ACADEMIC_SUB_ADMIN") {
+  if (roleType === "ADMIN" || roleType === "ACADEMIC_SUB_ADMIN" || roleType === "SUPER_ADMIN") {
     return { type: "ALL" };
   }
 
@@ -131,6 +140,7 @@ export async function createTeacherLeave(
       toDate,
       reason: payload.reason,
       leaveType: payload.leaveType ?? null,
+      attachmentUrl: payload.attachmentUrl ?? null,
       status: LeaveStatus.PENDING,
     },
   });
@@ -156,11 +166,18 @@ export async function createTeacherLeave(
       title: "Leave Request Submitted",
       body: "A new teacher leave request is awaiting approval.",
       sentById: userId,
+      entityType: "TEACHER_LEAVE",
+      entityId: leave.id,
+      linkUrl: "/admin/teacher-leaves",
       metadata: {
         eventType: "LEAVE_REQUEST_SUBMITTED",
         leaveId: leave.id,
         teacherId,
         leaveType: payload.leaveType ?? null,
+        routes: {
+          ADMIN: "/admin/teacher-leaves",
+          ACADEMIC_SUB_ADMIN: "/admin/teacher-leaves",
+        },
       },
     });
   }
@@ -168,11 +185,47 @@ export async function createTeacherLeave(
   return leave;
 }
 
+export async function applyTeacherLeave(
+  schoolId: string,
+  payload: ApplyTeacherLeaveInput,
+  actor: ActorContext
+): Promise<Prisma.TeacherLeaveGetPayload<{}>> {
+  const mapped: CreateTeacherLeaveInput = {
+    startDate: payload.fromDate,
+    endDate: payload.toDate,
+    reason: payload.reason,
+    leaveType: payload.leaveType,
+    attachmentUrl: payload.attachmentUrl,
+  };
+
+  return createTeacherLeave(schoolId, mapped, actor);
+}
+
 export async function listTeacherLeaves(
   schoolId: string,
   actor: ActorContext,
   pagination?: { skip: number; take: number }
-): Promise<{ items: Prisma.TeacherLeaveGetPayload<{}>[]; total: number }> {
+): Promise<{
+  items: Prisma.TeacherLeaveGetPayload<{
+    select: {
+      id: true;
+      teacherId: true;
+      teacher: { select: { id: true; fullName: true; employeeId: true } };
+      fromDate: true;
+      toDate: true;
+      reason: true;
+      leaveType: true;
+      status: true;
+      attachmentUrl: true;
+      adminRemarks: true;
+      approvedAt: true;
+      approvedById: true;
+      createdAt: true;
+      updatedAt: true;
+    };
+  }>[];
+  total: number;
+}> {
   const scope = await resolveTeacherLeaveScope(schoolId, actor);
 
   const where: Prisma.TeacherLeaveWhereInput = {
@@ -183,13 +236,33 @@ export async function listTeacherLeaves(
   const [items, total] = await prisma.$transaction([
     prisma.teacherLeave.findMany({
       where,
+      select: {
+        id: true,
+        teacherId: true,
+        teacher: { select: { id: true, fullName: true, employeeId: true, photoUrl: true } },
+        fromDate: true,
+        toDate: true,
+        reason: true,
+        leaveType: true,
+        status: true,
+        attachmentUrl: true,
+        adminRemarks: true,
+        approvedAt: true,
+        approvedById: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       orderBy: [{ createdAt: "desc" }],
       ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}),
     }),
     prisma.teacherLeave.count({ where }),
   ]);
 
-  return { items, total };
+  const mapped = items.map((item) => ({
+    ...item,
+    attachmentUrl: toSecureFileUrl(item.attachmentUrl),
+  }));
+  return { items: mapped, total };
 }
 
 export async function getTeacherLeaveById(
@@ -213,14 +286,14 @@ export async function getTeacherLeaveById(
   const { userId, roleType } = ensureActor(actor);
 
   if (roleType === "ADMIN" || roleType === "ACADEMIC_SUB_ADMIN") {
-    return leave;
+    return { ...leave, attachmentUrl: toSecureFileUrl(leave.attachmentUrl) };
   }
 
   if (roleType === "TEACHER") {
     if (leave.teacher.userId !== userId) {
       throw new ApiError(403, "Forbidden");
     }
-    return leave;
+    return { ...leave, attachmentUrl: toSecureFileUrl(leave.attachmentUrl) };
   }
 
   throw new ApiError(403, "Forbidden");
@@ -230,7 +303,8 @@ async function updateTeacherLeaveStatus(
   schoolId: string,
   id: string,
   actor: ActorContext,
-  status: LeaveStatus
+  status: LeaveStatus,
+  remarks?: string
 ): Promise<Prisma.TeacherLeaveGetPayload<{}>> {
   const leave = await prisma.teacherLeave.findFirst({
     where: { id, teacher: { schoolId, deletedAt: null } },
@@ -243,7 +317,11 @@ async function updateTeacherLeaveStatus(
 
   const { userId, roleType } = ensureActor(actor);
 
-  if (roleType !== "ADMIN" && roleType !== "ACADEMIC_SUB_ADMIN") {
+  if (
+    roleType !== "ADMIN" &&
+    roleType !== "ACADEMIC_SUB_ADMIN" &&
+    roleType !== "SUPER_ADMIN"
+  ) {
     throw new ApiError(403, "Forbidden");
   }
 
@@ -251,13 +329,29 @@ async function updateTeacherLeaveStatus(
     throw new ApiError(400, "Leave request already processed");
   }
 
-  const updated = await prisma.teacherLeave.update({
-    where: { id: leave.id },
-    data: {
-      status,
-      approvedById: userId,
-      approvedAt: new Date(),
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    const db = tx as typeof prisma;
+    const updatedLeave = await tx.teacherLeave.update({
+      where: { id: leave.id },
+      data: {
+        status,
+        approvedById: userId,
+        approvedAt: new Date(),
+        ...(remarks !== undefined ? { adminRemarks: remarks } : {}),
+      },
+    });
+
+    if (status === LeaveStatus.APPROVED) {
+      await generateSubstitutions(db, {
+        schoolId,
+        teacherId: leave.teacher.id,
+        fromDate: leave.fromDate,
+        toDate: leave.toDate,
+        createdById: userId,
+      });
+    }
+
+    return updatedLeave;
   });
 
   await logAudit({
@@ -268,6 +362,7 @@ async function updateTeacherLeaveStatus(
     metadata: {
       teacherId: leave.teacher.id,
       status,
+      remarks: remarks ?? null,
     },
   });
 
@@ -284,6 +379,9 @@ async function updateTeacherLeaveStatus(
           status === LeaveStatus.APPROVED ? "approved" : "rejected"
         }.`,
         sentById: userId,
+        entityType: "TEACHER_LEAVE",
+        entityId: leave.id,
+        linkUrl: "/teacher/leave",
         metadata: {
           eventType:
             status === LeaveStatus.APPROVED
@@ -292,9 +390,23 @@ async function updateTeacherLeaveStatus(
           leaveId: leave.id,
           teacherId: leave.teacher.id,
           leaveType: leave.leaveType ?? null,
+          routes: {
+            TEACHER: "/teacher/leave",
+          },
         },
       }
     );
+  }
+
+  try {
+    const keys = [`leave:teacher:${leave.teacher.id}`];
+    if (leave.teacher.userId) {
+      keys.push(`leave:user:${leave.teacher.userId}`);
+    }
+    keys.push(`dashboard:teacher:${leave.teacher.id}`);
+    await safeRedisDel(keys);
+  } catch {
+    // ignore cache failures
   }
 
   return updated;
@@ -314,6 +426,16 @@ export async function rejectTeacherLeave(
   actor: ActorContext
 ): Promise<Prisma.TeacherLeaveGetPayload<{}>> {
   return updateTeacherLeaveStatus(schoolId, id, actor, LeaveStatus.REJECTED);
+}
+
+export async function adminUpdateTeacherLeaveStatus(
+  schoolId: string,
+  id: string,
+  actor: ActorContext,
+  status: LeaveStatus,
+  remarks?: string
+): Promise<Prisma.TeacherLeaveGetPayload<{}>> {
+  return updateTeacherLeaveStatus(schoolId, id, actor, status, remarks);
 }
 
 export async function cancelTeacherLeave(
@@ -367,11 +489,18 @@ export async function cancelTeacherLeave(
       title: "Leave Request Cancelled",
       body: "A teacher leave request has been cancelled.",
       sentById: userId,
+      entityType: "TEACHER_LEAVE",
+      entityId: leave.id,
+      linkUrl: "/admin/teacher-leaves",
       metadata: {
         eventType: "LEAVE_REQUEST_CANCELLED",
         leaveId: leave.id,
         teacherId: leave.teacher.id,
         leaveType: leave.leaveType ?? null,
+        routes: {
+          ADMIN: "/admin/teacher-leaves",
+          ACADEMIC_SUB_ADMIN: "/admin/teacher-leaves",
+        },
       },
     });
   }

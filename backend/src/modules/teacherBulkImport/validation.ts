@@ -2,32 +2,26 @@ import { z } from "zod";
 
 const optionalNonEmpty = z.string().trim().min(1).optional();
 
-const optionalIsoDate = z
+const phoneSchema = z
   .string()
   .trim()
-  .refine((value) => !Number.isNaN(Date.parse(value)), {
-    message: "joiningDate must be a valid ISO date",
-  })
+  .regex(/^\d{10,15}$/, "phone must contain 10 to 15 digits")
   .optional();
 
-export const teacherImportRowSchema = z
+export const teacherBulkImportRowSchema = z
   .object({
-    fullName: z.string().trim().min(1),
-    employeeId: z
-      .string()
-      .trim()
-      .min(1)
-      .transform((v) => v.toUpperCase()),
-  gender: z.enum(["MALE", "FEMALE", "OTHER"]).optional(),
-  designation: optionalNonEmpty,
-  department: optionalNonEmpty,
-  joiningDate: optionalIsoDate,
-  qualification: optionalNonEmpty,
-  phone: optionalNonEmpty,
-  email: z.string().trim().email().optional(),
-  address: optionalNonEmpty,
-  photoUrl: optionalNonEmpty,
+    firstName: z.string().trim().min(1, "firstName is required"),
+    lastName: z.string().trim().min(1, "lastName is required"),
+    email: z.string().trim().email().optional(),
+    phone: phoneSchema,
+    gender: z.enum(["MALE", "FEMALE", "OTHER"]).optional(),
+    qualification: optionalNonEmpty,
+    experienceYears: optionalNonEmpty,
+    address: optionalNonEmpty,
   })
-  .strict();
+  .refine((data) => data.email || data.phone, {
+    message: "email or phone is required",
+    path: ["email"],
+  });
 
-export const teacherImportFileSchema = z.array(teacherImportRowSchema).min(1);
+export type TeacherBulkImportRowInput = z.infer<typeof teacherBulkImportRowSchema>;

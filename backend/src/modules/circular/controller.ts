@@ -2,17 +2,17 @@ import type { NextFunction, Response } from "express";
 import type { UserRole } from "@prisma/client";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMetaWithSync, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMetaWithSync, parsePagination } from "@/utils/pagination";
 import {
   createCircular as createCircularService,
   deleteCircular as deleteCircularService,
   getCircularById as getCircularByIdService,
   listCirculars as listCircularsService,
   updateCircular as updateCircularService,
-} from "./service";
-import { circularIdSchema } from "./validation";
+} from "@/modules/circular/service";
+import { circularIdSchema } from "@/modules/circular/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {

@@ -1,4 +1,4 @@
-import { logger } from "../../utils/logger";
+import { logger } from "@/utils/logger";
 
 export type PushPayload = {
   schoolId?: string;

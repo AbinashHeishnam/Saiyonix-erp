@@ -1,17 +1,19 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
 import {
+  assignClassTeacher,
   createClass,
   deleteClass,
   getClassById,
   listClasses,
+  removeClassTeacher,
   updateClass,
-} from "./service";
-import { classIdSchema } from "./validation";
+} from "@/modules/class/service";
+import { classIdSchema } from "@/modules/class/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {
@@ -49,7 +51,9 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
   try {
     const schoolId = getSchoolId(req);
     const pagination = parsePagination(req.query);
-    const { items, total } = await listClasses(schoolId, pagination);
+    const academicYearId =
+      typeof req.query.academicYearId === "string" ? req.query.academicYearId : undefined;
+    const { items, total } = await listClasses(schoolId, academicYearId, pagination);
     return success(
       res,
       items,
@@ -90,6 +94,34 @@ export async function remove(req: AuthRequest, res: Response, next: NextFunction
     const id = parseId(req.params.id);
     const data = await deleteClass(schoolId, id);
     return success(res, data, "Class deleted successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function assignClassTeacherController(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const data = await assignClassTeacher(schoolId, req.body);
+    return success(res, data, "Class teacher assigned successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function removeClassTeacherController(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const data = await removeClassTeacher(schoolId, req.body);
+    return success(res, data, "Class teacher removed successfully");
   } catch (error) {
     return next(error);
   }

@@ -1,8 +1,14 @@
 import { z } from "zod";
 
+import { paginationQuerySchema } from "@/utils/pagination";
+
 const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/;
 
 export const periodIdSchema = z.string().uuid();
+export const periodIdParamSchema = z.object({ id: periodIdSchema }).strict();
+export const listPeriodQuerySchema = paginationQuerySchema.extend({
+  academicYearId: z.string().uuid().optional(),
+});
 
 export const createPeriodSchema = z
   .object({
@@ -42,5 +48,18 @@ export const updatePeriodSchema = z
     }
   );
 
+export const autoGeneratePeriodsSchema = z
+  .object({
+    startTime: z.string().regex(timeRegex, "Invalid time format"),
+    endTime: z.string().regex(timeRegex, "Invalid time format"),
+    periods: z.number().int().positive(),
+    lunchAfter: z.number().int().positive().optional(),
+  })
+  .refine((data) => data.startTime < data.endTime, {
+    message: "startTime must be before endTime",
+    path: ["startTime"],
+  });
+
 export type CreatePeriodInput = z.infer<typeof createPeriodSchema>;
 export type UpdatePeriodInput = z.infer<typeof updatePeriodSchema>;
+export type AutoGeneratePeriodsInput = z.infer<typeof autoGeneratePeriodsSchema>;

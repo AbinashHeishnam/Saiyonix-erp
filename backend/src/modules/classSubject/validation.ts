@@ -1,6 +1,10 @@
 import { z } from "zod";
 
+import { paginationQuerySchema } from "@/utils/pagination";
+
 export const classSubjectIdSchema = z.string().uuid();
+export const classSubjectIdParamSchema = z.object({ id: classSubjectIdSchema }).strict();
+export const listClassSubjectQuerySchema = paginationQuerySchema;
 
 export const createClassSubjectSchema = z.object({
   classId: z.string().uuid(),

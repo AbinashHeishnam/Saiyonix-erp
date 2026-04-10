@@ -1,16 +1,17 @@
 import type { Prisma, NotificationPriority, UserRole } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { smsConfig } from "../../core/config/externalServices";
-import { ApiError } from "../../core/errors/apiError";
-import { enqueueNotificationJob } from "../../core/queue/notificationQueue";
-import { sendSMS } from "../../core/services/sms.service";
-import { logAudit } from "../../utils/audit";
-import { eventConfig } from "./eventConfig";
-import { resolveRecipients } from "./resolvers";
-import { renderTemplate } from "./templates";
-import type { DeliveryChannel, EventType, NotificationPayload } from "./types";
-import type { SendNotificationInput } from "./send.validation";
+import prisma from "@/core/db/prisma";
+import { getSmsConfig } from "@/core/config/externalServices";
+import { ApiError } from "@/core/errors/apiError";
+import { getNotificationQueue } from "@/core/queue/notificationBullmq";
+import { sendSMS } from "@/core/services/sms.service";
+import { logAudit } from "@/utils/audit";
+import { chunkArray } from "@/core/utils/perf";
+import { eventConfig } from "@/modules/notification/eventConfig";
+import { resolveRecipients } from "@/modules/notification/resolvers";
+import { renderTemplate } from "@/modules/notification/templates";
+import type { DeliveryChannel, EventType, NotificationPayload } from "@/modules/notification/types";
+import type { SendNotificationInput } from "@/modules/notification/send.validation";
 
 type NotificationRecipientWithNotification = Prisma.NotificationRecipientGetPayload<{
   select: {
@@ -60,6 +61,38 @@ function ensureSchoolId(payload: NotificationPayload): string {
   return payload.schoolId;
 }
 
+export async function enqueuePushJob(payload: {
+  userIds: string[];
+  message: string;
+  title?: string;
+  body?: string;
+  schoolId?: string;
+}) {
+  try {
+    const queue = await getNotificationQueue();
+    if (!queue) {
+      console.warn("[queue] notification queue unavailable");
+      return false;
+    }
+    await queue.add("notify", {
+      userIds: payload.userIds,
+      message: payload.message,
+      title: payload.title ?? null,
+      body: payload.body ?? null,
+      schoolId: payload.schoolId ?? null,
+    });
+    if (process.env.NODE_ENV !== "production") {
+      console.info(
+        `[queue] notification enqueued users=${payload.userIds.length} school=${payload.schoolId ?? "n/a"}`
+      );
+    }
+    return true;
+  } catch (err) {
+    console.error("[queue] notification enqueue failed", err);
+    return false;
+  }
+}
+
 export async function trigger(
   eventType: EventType,
   payload: NotificationPayload
@@ -82,12 +115,17 @@ export async function trigger(
     const created = await tx.notification.create({
       data: {
         schoolId,
+        eventType,
         title,
         body,
         category: config.category ?? null,
         priority: config.priority,
         sentVia: config.deliveryChannels,
         sentById: payload.sentById ?? null,
+        entityType: payload.entityType ?? null,
+        entityId: payload.entityId ?? null,
+        linkUrl: payload.linkUrl ?? null,
+        metadata: payload.metadata ?? undefined,
         scheduledAt: payload.scheduledAt ?? null,
         sentAt: new Date(),
       },
@@ -104,32 +142,47 @@ export async function trigger(
     return created;
   });
 
-  if (config.deliveryChannels.includes("SMS") && smsConfig.enabled) {
-    try {
-      const users = await prisma.user.findMany({
-        where: { id: { in: recipients }, schoolId, mobile: { not: null } },
-        select: { mobile: true },
-      });
+  if (config.deliveryChannels.includes("SMS")) {
+    const smsConfig = await getSmsConfig();
+    if (!smsConfig.enabled) {
+      // Skip SMS when provider is not configured.
+    } else {
+      try {
+        const users = await prisma.user.findMany({
+          where: { id: { in: recipients }, schoolId, mobile: { not: null } },
+          select: { mobile: true },
+        });
 
-      await Promise.all(
-        users
+        const mobiles = users
           .map((user) => user.mobile)
-          .filter((mobile): mobile is string => Boolean(mobile))
-          .map((mobile) => sendSMS({ phoneNumber: mobile, message: body }))
-      );
-    } catch {
-      // Ignore SMS failures to preserve in-app notification flow.
+          .filter((mobile): mobile is string => Boolean(mobile));
+        const chunks = chunkArray(mobiles, 50);
+        for (const chunk of chunks) {
+          await Promise.all(
+            chunk.map((mobile) => sendSMS({ phoneNumber: mobile, message: body }))
+          );
+        }
+      } catch {
+        // Ignore SMS failures to preserve in-app notification flow.
+      }
     }
   }
 
   if (config.deliveryChannels.includes("PUSH")) {
-    await enqueueNotificationJob({
-      schoolId,
-      userIds: recipients,
-      title,
-      body,
-      data: payload.metadata ?? null,
-    });
+    try {
+      const queued = await enqueuePushJob({
+        userIds: recipients,
+        message: body,
+        title,
+        body,
+        schoolId,
+      });
+      if (!queued) {
+        throw new Error("Queue failed — no fallback allowed");
+      }
+    } catch {
+      throw new Error("Queue failed — no fallback allowed");
+    }
   }
 
   return { notification, recipientCount: recipients.length };
@@ -147,6 +200,10 @@ export async function sendNotification(
     sentById,
     classId: payload.classId,
     sectionId: payload.sectionId,
+    linkUrl: payload.linkUrl,
+    entityType: payload.entityType,
+    entityId: payload.entityId,
+    metadata: payload.metadata,
   };
 
   if (idempotencyKey) {
@@ -238,12 +295,17 @@ export async function sendNotification(
       const created = await tx.notification.create({
         data: {
           schoolId,
+          eventType: payload.category ? `MANUAL_${payload.category}` : "MANUAL",
           title: payload.title,
           body: payload.body,
           category: payload.category ?? null,
           priority: payload.priority,
           sentVia: deliveryChannels,
           sentById: sentById ?? null,
+          entityType: payload.entityType ?? null,
+          entityId: payload.entityId ?? null,
+          linkUrl: payload.linkUrl ?? null,
+          metadata: payload.metadata ?? undefined,
           scheduledAt: null,
           sentAt: new Date(),
         },
@@ -260,34 +322,49 @@ export async function sendNotification(
       return created;
     });
 
-    if (deliveryChannels.includes("SMS") && smsConfig.enabled) {
-      try {
-        const users = await prisma.user.findMany({
-          where: { id: { in: recipients }, schoolId, mobile: { not: null } },
-          select: { mobile: true },
-        });
+    if (deliveryChannels.includes("SMS")) {
+      const smsConfig = await getSmsConfig();
+      if (!smsConfig.enabled) {
+        // Skip SMS when provider is not configured.
+      } else {
+        try {
+          const users = await prisma.user.findMany({
+            where: { id: { in: recipients }, schoolId, mobile: { not: null } },
+            select: { mobile: true },
+          });
 
-        await Promise.all(
-          users
+          const mobiles = users
             .map((user) => user.mobile)
-            .filter((mobile): mobile is string => Boolean(mobile))
-            .map((mobile) => sendSMS({ phoneNumber: mobile, message: payload.body }))
-        );
-      } catch {
-        // Ignore SMS failures to preserve in-app notification flow.
+            .filter((mobile): mobile is string => Boolean(mobile));
+          const chunks = chunkArray(mobiles, 50);
+          for (const chunk of chunks) {
+            await Promise.all(
+              chunk.map((mobile) => sendSMS({ phoneNumber: mobile, message: payload.body }))
+            );
+          }
+        } catch {
+          // Ignore SMS failures to preserve in-app notification flow.
+        }
       }
     }
 
     const result = { notification, recipientCount: recipients.length };
 
     if (deliveryChannels.includes("PUSH")) {
-      await enqueueNotificationJob({
-        schoolId,
-        userIds: recipients,
-        title: payload.title,
-        body: payload.body,
-        data: null,
-      });
+      try {
+        const queued = await enqueuePushJob({
+          userIds: recipients,
+          message: payload.body,
+          title: payload.title,
+          body: payload.body,
+          schoolId,
+        });
+        if (!queued) {
+          throw new Error("Queue failed — no fallback allowed");
+        }
+      } catch {
+        throw new Error("Queue failed — no fallback allowed");
+      }
     }
 
     if (idempotencyKey) {
@@ -355,6 +432,11 @@ export async function listNotifications(
             body: true,
             category: true,
             priority: true,
+            eventType: true,
+            entityType: true,
+            entityId: true,
+            linkUrl: true,
+            metadata: true,
             sentAt: true,
             createdAt: true,
           },
@@ -384,6 +466,15 @@ export async function markRead(
   notificationId: string
 ): Promise<{ id: string; readAt: Date }> {
   const now = new Date();
+  const byRecipient = await prisma.notificationRecipient.updateMany({
+    where: { id: notificationId, userId, notification: { schoolId } },
+    data: { readAt: now },
+  });
+
+  if (byRecipient.count > 0) {
+    return { id: notificationId, readAt: now };
+  }
+
   const result = await prisma.notificationRecipient.updateMany({
     where: { userId, notificationId, notification: { schoolId } },
     data: { readAt: now },

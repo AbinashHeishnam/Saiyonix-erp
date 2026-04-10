@@ -8,10 +8,11 @@ function roundToTwoDecimals(value: number) {
 
 export function calculateAttendancePercentage(totalDays: number, presentDays: number) {
   if (totalDays <= 0) {
-    return 0;
+    return 100;
   }
 
-  return roundToTwoDecimals((presentDays / totalDays) * 100);
+  const safePresent = Math.max(0, Math.min(presentDays, totalDays));
+  return roundToTwoDecimals((safePresent / totalDays) * 100);
 }
 
 export function checkAttendanceThresholds(percentage: number): {

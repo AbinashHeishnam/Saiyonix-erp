@@ -4,8 +4,13 @@ import { authMiddleware } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { validate } from "../../middleware/validate.middleware";
-import { create, getById, list, remove, update } from "./controller";
-import { createPeriodSchema, updatePeriodSchema } from "./validation";
+import { create, getById, list, remove, update } from "@/modules/period/controller";
+import {
+  createPeriodSchema,
+  listPeriodQuerySchema,
+  periodIdParamSchema,
+  updatePeriodSchema,
+} from "@/modules/period/validation";
 
 const periodRouter = Router();
 
@@ -17,14 +22,14 @@ periodRouter.post(
   validate(createPeriodSchema),
   create
 );
-periodRouter.get("/", authMiddleware, list);
-periodRouter.get("/:id", authMiddleware, getById);
+periodRouter.get("/", authMiddleware, validate({ query: listPeriodQuerySchema }), list);
+periodRouter.get("/:id", authMiddleware, validate({ params: periodIdParamSchema }), getById);
 periodRouter.patch(
   "/:id",
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("period:update"),
-  validate(updatePeriodSchema),
+  validate({ params: periodIdParamSchema, body: updatePeriodSchema }),
   update
 );
 periodRouter.delete(
@@ -32,6 +37,7 @@ periodRouter.delete(
   authMiddleware,
   allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("period:delete"),
+  validate({ params: periodIdParamSchema }),
   remove
 );
 

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
+import { paginationQuerySchema } from "@/utils/pagination";
+
 export const noticeIdSchema = z.string().uuid();
+export const noticeIdParamSchema = z.object({ id: noticeIdSchema }).strict();
 
 const targetTypeSchema = z.enum(["ALL", "CLASS", "SECTION", "ROLE"]);
 const targetRoleSchema = z.enum([
@@ -61,6 +64,7 @@ export const createNoticeSchema = z.object({
   targetRole: targetRoleSchema.nullable().optional(),
   publishedAt: z.coerce.date().optional(),
   expiresAt: z.coerce.date().optional(),
+  attachments: z.array(z.string().trim().min(1)).optional(),
 }).refine(validateTargeting, {
   message: "Invalid targeting configuration",
   path: ["targetType"],
@@ -78,6 +82,7 @@ export const updateNoticeSchema = z
     targetRole: targetRoleSchema.nullable().optional(),
     publishedAt: z.coerce.date().optional(),
     expiresAt: z.coerce.date().optional(),
+    attachments: z.array(z.string().trim().min(1)).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field is required",
@@ -89,3 +94,19 @@ export const updateNoticeSchema = z
 
 export type CreateNoticeInput = z.infer<typeof createNoticeSchema>;
 export type UpdateNoticeInput = z.infer<typeof updateNoticeSchema>;
+
+export const listNoticeQuerySchema = paginationQuerySchema
+  .extend({
+    noticeType: z.string().trim().min(1).optional(),
+    active: z.union([z.literal("true"), z.literal("false"), z.boolean()]).optional(),
+    classId: z.string().uuid().optional(),
+    sectionId: z.string().uuid().optional(),
+    roleType: targetRoleSchema.optional(),
+  })
+  .strict();
+
+export const listNoticeMeQuerySchema = paginationQuerySchema
+  .extend({
+    active: z.union([z.literal("true"), z.literal("false"), z.boolean()]).optional(),
+  })
+  .strict();

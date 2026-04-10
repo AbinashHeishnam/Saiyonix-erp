@@ -1,106 +1,42 @@
 import "dotenv/config";
 
 import bcrypt from "bcrypt";
-import dotenv from "dotenv";
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import { UserRole } from "@prisma/client";
+import {
+  permissionKeys,
+  permissionDescriptions,
+} from "../src/modules/auth/permissions";
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const CONFIG_PATH = path.join(ROOT_DIR, "deploy", "school.config.json");
-const ENV_PATH = path.join(ROOT_DIR, ".env");
 
 type SetupConfig = {
-  postgres: { host: string; port: number; adminUser: string; adminPassword: string };
   school: { name: string };
-  database: { dbName: string; dbUser: string; dbPassword: string };
-  admin: { email: string; password: string };
-  academicSubAdmin: { email: string; password: string };
-  financeSubAdmin: { email: string; password: string };
+  admin: { email: string };
+  academicSubAdmin: { email: string };
+  financeSubAdmin: { email: string };
+};
+
+type SetupEnv = {
+  postgresHost: string;
+  postgresPort: number;
+  postgresAdminUser: string;
+  postgresAdminPassword: string;
+  appDbName: string;
+  appDbUser: string;
+  appDbPassword: string;
+  bootstrapAdminPassword: string;
+  bootstrapAcademicPassword: string;
+  bootstrapFinancePassword: string;
 };
 
 type PrismaClientLike = {
   [key: string]: any;
   $disconnect: () => Promise<void>;
-};
-
-const permissionKeys = [
-  "academicYear:create",
-  "academicYear:read",
-  "academicYear:update",
-  "academicYear:delete",
-  "student:create",
-  "student:read",
-  "student:update",
-  "student:delete",
-  "student:bulk-import",
-  "teacher:create",
-  "teacher:read",
-  "teacher:update",
-  "teacher:delete",
-  "teacher:bulk-import",
-  "class:create",
-  "class:read",
-  "class:update",
-  "class:delete",
-  "section:create",
-  "section:read",
-  "section:update",
-  "section:delete",
-  "subject:create",
-  "subject:read",
-  "subject:update",
-  "subject:delete",
-  "period:create",
-  "period:read",
-  "period:update",
-  "period:delete",
-  "classSubject:create",
-  "classSubject:read",
-  "classSubject:update",
-  "classSubject:delete",
-  "teacherSubjectClass:create",
-  "teacherSubjectClass:read",
-  "teacherSubjectClass:update",
-  "teacherSubjectClass:delete",
-  "timetableSlot:create",
-  "timetableSlot:read",
-  "timetableSlot:update",
-  "timetableSlot:delete",
-  "attendance:mark",
-  "attendance:update",
-  "attendance:read",
-  "exam:create",
-  "exam:publish",
-  "exam:read",
-  "fee:create",
-  "fee:collect",
-  "fee:read",
-  "notice:create",
-  "notice:read",
-  "notice:update",
-  "notice:delete",
-  "circular:create",
-  "circular:read",
-  "circular:update",
-  "circular:delete",
-  "notification:send",
-] as const;
-
-const permissionDescriptions: Partial<Record<(typeof permissionKeys)[number], string>> = {
-  "attendance:mark": "Mark student attendance",
-  "attendance:update": "Update student attendance",
-  "notice:create": "Create notice",
-  "notice:read": "Read notices",
-  "notice:update": "Update notice",
-  "notice:delete": "Delete notice",
-  "circular:create": "Create circular",
-  "circular:read": "Read circulars",
-  "circular:update": "Update circular",
-  "circular:delete": "Delete circular",
-  "notification:send": "Send notifications",
 };
 
 function loadConfig(): SetupConfig {
@@ -111,38 +47,54 @@ function loadConfig(): SetupConfig {
   const raw = readFileSync(CONFIG_PATH, "utf-8");
   const config = JSON.parse(raw) as SetupConfig;
 
-  if (
-    !config.postgres?.host ||
-    !config.postgres?.port ||
-    !config.postgres?.adminUser ||
-    !config.postgres?.adminPassword
-  ) {
-    throw new Error(
-      "postgres.host, postgres.port, postgres.adminUser, postgres.adminPassword are required"
-    );
-  }
-
   if (!config.school?.name) {
     throw new Error("school.name is required in deploy/school.config.json");
   }
 
-  if (!config.database?.dbName || !config.database?.dbUser || !config.database?.dbPassword) {
-    throw new Error("database.dbName, database.dbUser, database.dbPassword are required");
+  if (!config.admin?.email) {
+    throw new Error("admin.email is required");
   }
 
-  if (!config.admin?.email || !config.admin?.password) {
-    throw new Error("admin.email and admin.password are required");
+  if (!config.academicSubAdmin?.email) {
+    throw new Error("academicSubAdmin.email is required");
   }
 
-  if (!config.academicSubAdmin?.email || !config.academicSubAdmin?.password) {
-    throw new Error("academicSubAdmin.email and academicSubAdmin.password are required");
-  }
-
-  if (!config.financeSubAdmin?.email || !config.financeSubAdmin?.password) {
-    throw new Error("financeSubAdmin.email and financeSubAdmin.password are required");
+  if (!config.financeSubAdmin?.email) {
+    throw new Error("financeSubAdmin.email is required");
   }
 
   return config;
+}
+
+function requireEnv(name: string) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
+function loadEnv(): SetupEnv {
+  const postgresHost = requireEnv("POSTGRES_HOST");
+  const postgresPortRaw = requireEnv("POSTGRES_PORT");
+  const postgresPort = Number(postgresPortRaw);
+
+  if (!Number.isFinite(postgresPort) || postgresPort <= 0) {
+    throw new Error("POSTGRES_PORT must be a valid number");
+  }
+
+  return {
+    postgresHost,
+    postgresPort,
+    postgresAdminUser: requireEnv("POSTGRES_ADMIN_USER"),
+    postgresAdminPassword: requireEnv("POSTGRES_ADMIN_PASSWORD"),
+    appDbName: requireEnv("APP_DB_NAME"),
+    appDbUser: requireEnv("APP_DB_USER"),
+    appDbPassword: requireEnv("APP_DB_PASSWORD"),
+    bootstrapAdminPassword: requireEnv("BOOTSTRAP_ADMIN_PASSWORD"),
+    bootstrapAcademicPassword: requireEnv("BOOTSTRAP_ACADEMIC_PASSWORD"),
+    bootstrapFinancePassword: requireEnv("BOOTSTRAP_FINANCE_PASSWORD"),
+  };
 }
 
 function quoteIdentifier(value: string) {
@@ -156,33 +108,6 @@ function quoteLiteral(value: string) {
 function generateSchoolCode(name: string) {
   const normalized = name.toUpperCase().replace(/[^A-Z0-9]/g, "");
   return normalized.slice(0, 6) || "SCH001";
-}
-
-function updateEnvFile(databaseUrl: string) {
-  const line = `DATABASE_URL=${databaseUrl}`;
-
-  if (!existsSync(ENV_PATH)) {
-    writeFileSync(ENV_PATH, `${line}\n`, "utf-8");
-    return;
-  }
-
-  const contents = readFileSync(ENV_PATH, "utf-8");
-  const lines = contents.split(/\r?\n/);
-  let replaced = false;
-
-  const next = lines.map((existing) => {
-    if (existing.startsWith("DATABASE_URL=")) {
-      replaced = true;
-      return line;
-    }
-    return existing;
-  });
-
-  if (!replaced) {
-    next.push(line);
-  }
-
-  writeFileSync(ENV_PATH, next.filter((value) => value.length > 0).join("\n") + "\n", "utf-8");
 }
 
 async function ensureDatabase(adminUrl: string, dbName: string, dbUser: string, dbPassword: string) {
@@ -263,52 +188,27 @@ async function seedRolesAndPermissions(prisma: PrismaClientLike) {
     select: { id: true, permissionKey: true },
   });
 
-  const roleIdByType = new Map(rolesInDb.map((role) => [role.roleType, role.id]));
+  const roleIdByType = new Map(rolesInDb.map((role: { id: string; roleType: UserRole }) => [role.roleType, role.id]));
   const permissionIdByKey = new Map(
-    permissions.map((permission) => [permission.permissionKey, permission.id])
+    permissions.map((permission: { id: string; permissionKey: string }) => [permission.permissionKey, permission.id])
   );
 
-  const academicPermissions = permissionKeys.filter(
-    (key) =>
-      key.startsWith("academicYear:") ||
-      key.startsWith("class:") ||
-      key.startsWith("section:") ||
-      key.startsWith("subject:") ||
-      key.startsWith("period:") ||
-      key.startsWith("classSubject:") ||
-      key.startsWith("teacherSubjectClass:") ||
-      key.startsWith("timetableSlot:") ||
-      key.startsWith("student:") ||
-      key.startsWith("teacher:") ||
-      key.startsWith("attendance:") ||
-      key.startsWith("exam:") ||
-      key.startsWith("notice:") ||
-      key.startsWith("circular:") ||
-      key.startsWith("notification:")
-  );
+  const academicPermissions = [...permissionKeys];
 
-  const financePermissions = permissionKeys.filter((key) => key.startsWith("fee:"));
+  const financePermissions = [...permissionKeys];
 
   const rolePermissionMap: Record<UserRole, string[]> = {
     [UserRole.SUPER_ADMIN]: [...permissionKeys],
     [UserRole.ADMIN]: [...permissionKeys],
     [UserRole.ACADEMIC_SUB_ADMIN]: [...academicPermissions],
     [UserRole.FINANCE_SUB_ADMIN]: [...financePermissions],
-    [UserRole.TEACHER]: [
-      "teacher:read",
-      "attendance:mark",
-      "attendance:update",
-      "attendance:read",
-      "student:read",
-      "timetableSlot:read",
-      "notice:read",
-      "circular:read",
-    ],
-    [UserRole.PARENT]: ["student:read", "timetableSlot:read", "notice:read", "circular:read"],
-    [UserRole.STUDENT]: ["student:read", "timetableSlot:read", "notice:read", "circular:read"],
+    [UserRole.TEACHER]: [...permissionKeys],
+    [UserRole.PARENT]: [...permissionKeys],
+    [UserRole.STUDENT]: [...permissionKeys],
   };
 
   const targetRoles: UserRole[] = [
+    UserRole.SUPER_ADMIN,
     UserRole.ADMIN,
     UserRole.ACADEMIC_SUB_ADMIN,
     UserRole.FINANCE_SUB_ADMIN,
@@ -348,7 +248,11 @@ async function seedRolesAndPermissions(prisma: PrismaClientLike) {
   }
 }
 
-async function createSchoolAndAdmins(prisma: PrismaClientLike, config: SetupConfig) {
+async function createSchoolAndAdmins(
+  prisma: PrismaClientLike,
+  config: SetupConfig,
+  env: SetupEnv
+) {
   const schoolCode = generateSchoolCode(config.school.name);
 
   const school = await prisma.school.upsert({
@@ -374,7 +278,7 @@ async function createSchoolAndAdmins(prisma: PrismaClientLike, config: SetupConf
     select: { id: true, roleType: true },
   });
 
-  const roleIdByType = new Map(roles.map((role) => [role.roleType, role.id]));
+  const roleIdByType = new Map(roles.map((role: { id: string; roleType: UserRole }) => [role.roleType, role.id]));
 
   const adminRoleId = roleIdByType.get(UserRole.ADMIN);
   const academicRoleId = roleIdByType.get(UserRole.ACADEMIC_SUB_ADMIN);
@@ -384,9 +288,9 @@ async function createSchoolAndAdmins(prisma: PrismaClientLike, config: SetupConf
     throw new Error("Required roles are missing after seeding.");
   }
 
-  const adminHash = await bcrypt.hash(config.admin.password, 10);
-  const academicHash = await bcrypt.hash(config.academicSubAdmin.password, 10);
-  const financeHash = await bcrypt.hash(config.financeSubAdmin.password, 10);
+  const adminHash = await bcrypt.hash(env.bootstrapAdminPassword, 10);
+  const academicHash = await bcrypt.hash(env.bootstrapAcademicPassword, 10);
+  const financeHash = await bcrypt.hash(env.bootstrapFinancePassword, 10);
 
   await prisma.user.upsert({
     where: { email: config.admin.email },
@@ -395,6 +299,7 @@ async function createSchoolAndAdmins(prisma: PrismaClientLike, config: SetupConf
       roleId: adminRoleId,
       schoolId: school.id,
       isActive: true,
+      mustChangePassword: true,
     },
     create: {
       email: config.admin.email,
@@ -402,6 +307,7 @@ async function createSchoolAndAdmins(prisma: PrismaClientLike, config: SetupConf
       roleId: adminRoleId,
       schoolId: school.id,
       isActive: true,
+      mustChangePassword: true,
     },
   });
 
@@ -412,6 +318,7 @@ async function createSchoolAndAdmins(prisma: PrismaClientLike, config: SetupConf
       roleId: academicRoleId,
       schoolId: school.id,
       isActive: true,
+      mustChangePassword: true,
     },
     create: {
       email: config.academicSubAdmin.email,
@@ -419,6 +326,7 @@ async function createSchoolAndAdmins(prisma: PrismaClientLike, config: SetupConf
       roleId: academicRoleId,
       schoolId: school.id,
       isActive: true,
+      mustChangePassword: true,
     },
   });
 
@@ -429,6 +337,7 @@ async function createSchoolAndAdmins(prisma: PrismaClientLike, config: SetupConf
       roleId: financeRoleId,
       schoolId: school.id,
       isActive: true,
+      mustChangePassword: true,
     },
     create: {
       email: config.financeSubAdmin.email,
@@ -436,32 +345,27 @@ async function createSchoolAndAdmins(prisma: PrismaClientLike, config: SetupConf
       roleId: financeRoleId,
       schoolId: school.id,
       isActive: true,
+      mustChangePassword: true,
     },
   });
 }
 
 async function main() {
   const config = loadConfig();
+  const env = loadEnv();
   const adminUrl = `postgresql://${encodeURIComponent(
-    config.postgres.adminUser
-  )}:${encodeURIComponent(config.postgres.adminPassword)}@${config.postgres.host}:${
-    config.postgres.port
-  }/postgres`;
+    env.postgresAdminUser
+  )}:${encodeURIComponent(env.postgresAdminPassword)}@${env.postgresHost}:${env.postgresPort
+    }/postgres`;
 
-  await ensureDatabase(
-    adminUrl,
-    config.database.dbName,
-    config.database.dbUser,
-    config.database.dbPassword
-  );
+  await ensureDatabase(adminUrl, env.appDbName, env.appDbUser, env.appDbPassword);
 
-  const databaseUrl = `postgresql://${encodeURIComponent(
-    config.database.dbUser
-  )}:${encodeURIComponent(config.database.dbPassword)}@${config.postgres.host}:${
-    config.postgres.port
-  }/${config.database.dbName}`;
+  const databaseUrl =
+    process.env.DATABASE_URL ??
+    `postgresql://${encodeURIComponent(env.appDbUser)}:${encodeURIComponent(
+      env.appDbPassword
+    )}@${env.postgresHost}:${env.postgresPort}/${env.appDbName}`;
 
-  updateEnvFile(databaseUrl);
   process.env.DATABASE_URL = databaseUrl;
 
   execSync("npx prisma migrate deploy", {
@@ -470,12 +374,11 @@ async function main() {
     env: { ...process.env, DATABASE_URL: databaseUrl },
   });
 
-  dotenv.config({ path: ENV_PATH, override: true });
   const { default: prisma } = await import("../src/core/db/prisma");
 
   try {
     await seedRolesAndPermissions(prisma);
-    await createSchoolAndAdmins(prisma, config);
+    await createSchoolAndAdmins(prisma, config, env);
   } finally {
     await prisma.$disconnect();
   }

@@ -1,20 +1,22 @@
 import type { Prisma } from "@prisma/client";
 
-import prisma from "../../../core/db/prisma";
-import { ApiError } from "../../../core/errors/apiError";
-import { normalizeDate } from "../../../core/utils/date";
-import { logAudit } from "../../../utils/audit";
-import { trigger as triggerNotification } from "../../notification/service";
-import { PRESENT_STATUSES } from "../summaries/service";
-import type { AttendanceActor, AttendanceCounts } from "../types";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { formatLocalDate, toLocalDateOnly } from "@/core/utils/localDate";
+import { normalizeDate } from "@/core/utils/date";
+import { logAudit } from "@/utils/audit";
+import { trigger as triggerNotification } from "@/modules/notification/service";
+import { PRESENT_STATUSES } from "@/modules/attendance/summaries/service";
+import type { AttendanceActor, AttendanceCounts } from "@/modules/attendance/types";
 import type {
   CreateCorrectionRequestInput,
   ReviewCorrectionInput,
-} from "./validation";
+} from "@/modules/attendance/corrections/validation";
 
 const DEFAULT_WARNING_LEVELS = [85, 80, 75];
 
-type DbClient = Prisma.TransactionClient | typeof prisma;
+type DbClient = typeof prisma;
+
 
 function ensureActor(actor: AttendanceActor): { userId: string; roleType: string } {
   if (!actor.userId || !actor.roleType) {
@@ -29,13 +31,14 @@ function isPresentStatus(status: string) {
 }
 
 async function getAttendanceSettings(client: DbClient, schoolId: string) {
-  const settings = await client.systemSetting.findMany({
-    where: {
-      schoolId,
-      settingKey: { in: ["ATTENDANCE_WARNING_LEVELS"] },
-    },
-    select: { settingKey: true, settingValue: true },
-  });
+  const settings: Array<{ settingKey: string; settingValue: unknown }> =
+    await client.systemSetting.findMany({
+      where: {
+        schoolId,
+        settingKey: { in: ["ATTENDANCE_WARNING_LEVELS"] },
+      },
+      select: { settingKey: true, settingValue: true },
+    });
 
   const byKey = new Map(settings.map((item) => [item.settingKey, item.settingValue]));
   const rawWarnings = byKey.get("ATTENDANCE_WARNING_LEVELS");
@@ -126,17 +129,21 @@ async function notifyAbsence(params: {
   attendanceDate: Date;
   actorUserId: string;
 }) {
+  const school = await prisma.school.findUnique({
+    where: { id: params.schoolId },
+    select: { timezone: true },
+  });
+  const timeZone = school?.timezone ?? "Asia/Kolkata";
+  const dateLabel = formatLocalDate(params.attendanceDate, timeZone);
   await triggerNotification("STUDENT_ALERT", {
     schoolId: params.schoolId,
     studentId: params.studentId,
     title: "Student Marked Absent",
-    body: `Student marked absent on ${params.attendanceDate
-      .toISOString()
-      .slice(0, 10)}.`,
+    body: `Student marked absent on ${dateLabel}.`,
     sentById: params.actorUserId,
     metadata: {
       eventType: "ATTENDANCE_ABSENT",
-      attendanceDate: params.attendanceDate.toISOString().slice(0, 10),
+      attendanceDate: dateLabel,
     },
   });
 }
@@ -144,7 +151,8 @@ async function notifyAbsence(params: {
 async function ensureTeacherIsClassTeacher(
   schoolId: string,
   sectionId: string,
-  userId: string
+  userId: string,
+  attendanceDate: Date
 ) {
   const teacher = await prisma.teacher.findFirst({
     where: { userId, schoolId, deletedAt: null },
@@ -156,12 +164,43 @@ async function ensureTeacherIsClassTeacher(
   }
 
   const section = await prisma.section.findFirst({
-    where: { id: sectionId, classTeacherId: teacher.id, deletedAt: null },
-    select: { id: true },
+    where: { id: sectionId, deletedAt: null },
+    select: { id: true, classTeacherId: true },
   });
 
   if (!section) {
-    throw new ApiError(403, "Only class teacher can request correction");
+    throw new ApiError(404, "Section not found");
+  }
+
+  if (section.classTeacherId !== teacher.id) {
+    const school = await prisma.school.findUnique({
+      where: { id: schoolId },
+      select: { timezone: true },
+    });
+    const timeZone = school?.timezone ?? "Asia/Kolkata";
+    const dateOnly = toLocalDateOnly(attendanceDate, timeZone);
+    const substitution = await prisma.substitution.findFirst({
+      where: {
+        sectionId,
+        date: dateOnly,
+        substituteTeacherId: teacher.id,
+      },
+      select: { id: true, isClassTeacherSubstitution: true, absentTeacherId: true },
+    });
+    console.log({
+      teacherId: teacher.id,
+      sectionClassTeacher: section.classTeacherId,
+      substitution,
+      dateOnly,
+    });
+    const isClassTeacher = section.classTeacherId === teacher.id;
+    const isValidSubstitute =
+      substitution &&
+      (substitution.isClassTeacherSubstitution === true ||
+        substitution.absentTeacherId === section.classTeacherId);
+    if (!isClassTeacher && !isValidSubstitute) {
+      throw new ApiError(403, "Not allowed to mark attendance");
+    }
   }
 }
 
@@ -188,7 +227,12 @@ export async function requestAttendanceCorrection(
     throw new ApiError(404, "Attendance record not found");
   }
 
-  await ensureTeacherIsClassTeacher(schoolId, attendance.sectionId, userId);
+  await ensureTeacherIsClassTeacher(
+    schoolId,
+    attendance.sectionId,
+    userId,
+    attendance.attendanceDate
+  );
 
   const today = normalizeDate(new Date());
   if (!attendance.attendanceDate || normalizeDate(attendance.attendanceDate) >= today) {

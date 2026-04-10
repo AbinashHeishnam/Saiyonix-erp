@@ -1,14 +1,16 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
+import prisma from "@/core/db/prisma";
+import { trigger } from "@/modules/notification/service";
+import { collectClassRecipients } from "@/modules/notification/recipientUtils";
+import { ApiError } from "@/core/errors/apiError";
 import type {
   CreateTeacherSubjectClassInput,
   TeacherSubjectClassFilters,
   UpdateTeacherSubjectClassInput,
-} from "./validation";
+} from "@/modules/teacherSubjectClass/validation";
 
-type DbClient = Prisma.TransactionClient | typeof prisma;
+type DbClient = typeof prisma;
 
 function mapPrismaError(error: unknown): never {
   const code =
@@ -168,21 +170,22 @@ export async function createTeacherSubjectClass(
   payload: CreateTeacherSubjectClassInput
 ) {
   try {
-    return await prisma.$transaction(async (tx) => {
-      await ensureTeacherBelongsToSchool(tx, schoolId, payload.teacherId);
+    const created = await prisma.$transaction(async (tx) => {
+      const db = tx as DbClient;
+      await ensureTeacherBelongsToSchool(db, schoolId, payload.teacherId);
       const classSubject = await ensureClassSubjectBelongsToSchool(
-        tx,
+        db,
         schoolId,
         payload.classSubjectId
       );
       if (!classSubject) {
         throw new ApiError(400, "Class subject mapping not found for this school");
       }
-      await ensureAcademicYearBelongsToSchool(tx, schoolId, payload.academicYearId);
+      await ensureAcademicYearBelongsToSchool(db, schoolId, payload.academicYearId);
 
       if (payload.sectionId) {
         const section = await ensureSectionBelongsToSchool(
-          tx,
+          db,
           schoolId,
           payload.sectionId
         );
@@ -215,6 +218,39 @@ export async function createTeacherSubjectClass(
         },
       });
     });
+    try {
+      const recipients = new Set<string>();
+      const classRecipients = await collectClassRecipients({
+        schoolId,
+        classId: created.classSubject.classId,
+        sectionId: created.sectionId,
+      });
+      classRecipients.forEach((id) => recipients.add(id));
+      if (created.teacher?.userId) recipients.add(created.teacher.userId);
+
+      if (recipients.size) {
+        await trigger("CLASS_SUBJECT_ASSIGNED", {
+          schoolId,
+          classId: created.classSubject.classId,
+          className: created.classSubject.class?.className,
+          sectionId: created.sectionId ?? undefined,
+          sectionName: created.section?.sectionName ?? undefined,
+          subjectName: created.classSubject.subject?.name,
+          userIds: Array.from(recipients),
+          metadata: {
+            teacherId: created.teacherId,
+            teacherName: created.teacher?.fullName ?? null,
+            classSubjectId: created.classSubjectId,
+          },
+        });
+      }
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.error("[notify] class subject assignment failed", error);
+      }
+    }
+
+    return created;
   } catch (error) {
     mapPrismaError(error);
   }
@@ -228,6 +264,7 @@ export async function getTeacherSubjectClasses(
   const whereClause: Prisma.TeacherSubjectClassWhereInput = {
     teacherId: filters.teacherId,
     sectionId: filters.sectionId,
+    academicYearId: filters.academicYearId,
     classSubject: filters.classId
       ? {
           classId: filters.classId,
@@ -288,15 +325,16 @@ export async function updateTeacherSubjectClass(
 ) {
   try {
     return await prisma.$transaction(async (tx) => {
-      const existing = await getTeacherSubjectClassByIdWithClient(tx, schoolId, id);
+      const db = tx as DbClient;
+      const existing = await getTeacherSubjectClassByIdWithClient(db, schoolId, id);
 
       if (payload.teacherId) {
-        await ensureTeacherBelongsToSchool(tx, schoolId, payload.teacherId);
+        await ensureTeacherBelongsToSchool(db, schoolId, payload.teacherId);
       }
 
       const classSubject = payload.classSubjectId
         ? await ensureClassSubjectBelongsToSchool(
-            tx,
+            db,
             schoolId,
             payload.classSubjectId
           )
@@ -307,7 +345,7 @@ export async function updateTeacherSubjectClass(
 
       if (payload.academicYearId) {
         await ensureAcademicYearBelongsToSchool(
-          tx,
+          db,
           schoolId,
           payload.academicYearId
         );
@@ -315,7 +353,7 @@ export async function updateTeacherSubjectClass(
 
       if (payload.sectionId !== undefined && payload.sectionId !== null) {
         const section = await ensureSectionBelongsToSchool(
-          tx,
+          db,
           schoolId,
           payload.sectionId
         );

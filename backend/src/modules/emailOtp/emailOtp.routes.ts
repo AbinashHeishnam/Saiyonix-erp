@@ -1,0 +1,39 @@
+import { Router } from "express";
+
+import { validate } from "@/middleware/validate.middleware";
+import { otpLimiter } from "@/middleware/rateLimiter.middleware";
+import {
+  requestEmailOtpController,
+  resendEmailOtpController,
+  verifyEmailOtpController,
+} from "@/modules/emailOtp/emailOtp.controller";
+import {
+  requestEmailOtpSchema,
+  resendEmailOtpSchema,
+  verifyEmailOtpSchema,
+} from "@/modules/emailOtp/emailOtp.validation";
+
+const emailOtpRouter = Router();
+
+emailOtpRouter.post(
+  "/request",
+  otpLimiter,
+  validate(requestEmailOtpSchema),
+  requestEmailOtpController
+);
+
+emailOtpRouter.post(
+  "/resend",
+  otpLimiter,
+  validate(resendEmailOtpSchema),
+  resendEmailOtpController
+);
+
+emailOtpRouter.post(
+  "/verify",
+  otpLimiter,
+  validate(verifyEmailOtpSchema),
+  verifyEmailOtpController
+);
+
+export default emailOtpRouter;

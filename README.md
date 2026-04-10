@@ -52,3 +52,8 @@ npm run dev
 npm run typecheck
 npx vitest run
 ```
+
+**How To Run Setup Securely**
+1. Copy `.env.example` to `.env`.
+2. Fill in all required values, including database and bootstrap passwords.
+3. Run `npm run setup` from `backend/`.

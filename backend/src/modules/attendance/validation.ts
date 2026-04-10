@@ -1,6 +1,9 @@
 import { z } from "zod";
 
+import { paginationQuerySchema } from "@/utils/pagination";
+
 export const attendanceIdSchema = z.string().uuid();
+export const attendanceIdParamSchema = z.object({ id: attendanceIdSchema }).strict();
 
 export const attendanceStatusSchema = z.enum([
   "PRESENT",
@@ -17,9 +20,8 @@ const attendanceRecordSchema = z.object({
 });
 
 export const createAttendanceSchema = z.object({
-  sectionId: z.string().uuid(),
-  academicYearId: z.string().uuid(),
-  timetableSlotId: z.string().uuid(),
+  sectionId: z.string().uuid().optional(),
+  academicYearId: z.string().uuid().optional(),
   attendanceDate: z.string().optional(),
   records: z.array(attendanceRecordSchema).min(1),
 });
@@ -40,3 +42,26 @@ export const updateAttendanceSchema = z
 
 export type CreateAttendanceInput = z.infer<typeof createAttendanceSchema>;
 export type UpdateAttendanceInput = z.infer<typeof updateAttendanceSchema>;
+
+export const attendanceAuditQuerySchema = paginationQuerySchema
+  .extend({
+    attendanceId: z.string().uuid().optional(),
+    studentId: z.string().uuid().optional(),
+  })
+  .strict();
+
+export const studentMonthlySummaryQuerySchema = z
+  .object({
+    studentId: z.string().uuid(),
+    academicYearId: z.string().uuid(),
+    month: z.string().min(1),
+    year: z.string().min(1),
+  })
+  .strict();
+
+export const schoolSummaryQuerySchema = z
+  .object({
+    academicYearId: z.string().uuid(),
+    date: z.string().optional(),
+  })
+  .strict();

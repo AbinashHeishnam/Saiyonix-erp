@@ -1,19 +1,21 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
 import {
+  adminUpdateTeacherLeaveStatus as adminUpdateTeacherLeaveStatusService,
   approveTeacherLeave as approveTeacherLeaveService,
+  applyTeacherLeave as applyTeacherLeaveService,
   cancelTeacherLeave as cancelTeacherLeaveService,
   createTeacherLeave as createTeacherLeaveService,
   getTeacherLeaveById as getTeacherLeaveByIdService,
   getTeacherLeaveTimeline as getTeacherLeaveTimelineService,
   listTeacherLeaves as listTeacherLeavesService,
   rejectTeacherLeave as rejectTeacherLeaveService,
-} from "./service";
-import { teacherLeaveIdSchema } from "./validation";
+} from "@/modules/teacherLeave/service";
+import { teacherLeaveIdSchema } from "@/modules/teacherLeave/validation";
 
 function getSchoolId(req: AuthRequest): string {
   if (!req.schoolId) {
@@ -62,7 +64,55 @@ export async function create(
   }
 }
 
+export async function apply(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<Response | void> {
+  try {
+    const schoolId = getSchoolId(req);
+    const actor = getActor(req);
+    const uploadedFile = (req as AuthRequest & { uploadedFile?: { fileUrl: string } })
+      .uploadedFile;
+    const payload = {
+      ...req.body,
+      attachmentUrl: uploadedFile?.fileUrl ?? req.body?.attachmentUrl,
+    };
+    const data = await applyTeacherLeaveService(schoolId, payload, actor);
+    return success(res, data, "Leave request created successfully", 201);
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export async function list(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<Response | void> {
+  try {
+    const schoolId = getSchoolId(req);
+    const actor = getActor(req);
+    const pagination = parsePagination(req.query);
+    const { items, total } = await listTeacherLeavesService(
+      schoolId,
+      actor,
+      pagination
+    );
+
+    return success(
+      res,
+      items,
+      "Leave requests fetched successfully",
+      200,
+      buildPaginationMeta(total, pagination)
+    );
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function myLeaves(
   req: AuthRequest,
   res: Response,
   next: NextFunction
@@ -132,6 +182,28 @@ export async function reject(
     const id = parseId(req.params.id);
     const data = await rejectTeacherLeaveService(schoolId, id, actor);
     return success(res, data, "Leave request rejected successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function adminUpdate(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<Response | void> {
+  try {
+    const schoolId = getSchoolId(req);
+    const actor = getActor(req);
+    const id = parseId(req.params.id);
+    const data = await adminUpdateTeacherLeaveStatusService(
+      schoolId,
+      id,
+      actor,
+      req.body.status,
+      req.body.remarks
+    );
+    return success(res, data, "Leave request updated successfully");
   } catch (error) {
     return next(error);
   }

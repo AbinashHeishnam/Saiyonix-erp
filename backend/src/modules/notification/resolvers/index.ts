@@ -1,12 +1,12 @@
-import { ApiError } from "../../../core/errors/apiError";
-import type { NotificationPayload, ResolverStrategy } from "../types";
-import { resolveClass } from "./class";
-import { resolveRoleAll } from "./roleAll";
-import { resolveSchoolAll } from "./schoolAll";
-import { resolveSection } from "./section";
-import { resolveStudentWithParents } from "./studentWithParents";
-import { resolveTeacherByClassSubject } from "./teacherByClassSubject";
-import { resolveUserList } from "./userList";
+import { ApiError } from "@/core/errors/apiError";
+import type { NotificationPayload, ResolverStrategy } from "@/modules/notification/types";
+import { resolveClass } from "@/modules/notification/resolvers/class";
+import { resolveRoleAll } from "@/modules/notification/resolvers/roleAll";
+import { resolveSchoolAll } from "@/modules/notification/resolvers/schoolAll";
+import { resolveSection } from "@/modules/notification/resolvers/section";
+import { resolveStudentWithParents } from "@/modules/notification/resolvers/studentWithParents";
+import { resolveTeacherByClassSubject } from "@/modules/notification/resolvers/teacherByClassSubject";
+import { resolveUserList } from "@/modules/notification/resolvers/userList";
 
 function dedupe(ids: string[]): string[] {
   return Array.from(new Set(ids));

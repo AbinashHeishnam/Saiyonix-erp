@@ -1,17 +1,17 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMetaWithSync, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMetaWithSync, parsePagination } from "@/utils/pagination";
 import {
   createNote as createNoteService,
   deleteNote as deleteNoteService,
   getNoteById as getNoteByIdService,
   listNotes as listNotesService,
   updateNote as updateNoteService,
-} from "./service";
-import { listNoteQuerySchema, noteIdSchema } from "./validation";
+} from "@/modules/notes/service";
+import { listNoteQuerySchema, noteIdSchema } from "@/modules/notes/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {

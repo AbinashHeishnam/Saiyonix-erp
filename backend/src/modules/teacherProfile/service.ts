@@ -1,9 +1,9 @@
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
 import type {
   CreateTeacherProfileInput,
   UpdateTeacherProfileInput,
-} from "./validation";
+} from "@/modules/teacherProfile/validation";
 
 async function ensureTeacherBelongsToSchool(schoolId: string, teacherId: string) {
   const teacher = await prisma.teacher.findFirst({
@@ -55,6 +55,35 @@ export async function getTeacherProfileByTeacherId(
   }
 
   return profile;
+}
+
+export async function listTeacherProfiles(
+  schoolId: string,
+  pagination?: { skip: number; take: number }
+) {
+  const where = {
+    teacher: { schoolId, deletedAt: null },
+  };
+
+  const [items, total] = await prisma.$transaction([
+    prisma.teacherProfile.findMany({
+      where,
+      include: {
+        teacher: {
+          select: {
+            id: true,
+            fullName: true,
+            employeeId: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}),
+    }),
+    prisma.teacherProfile.count({ where }),
+  ]);
+
+  return { items, total };
 }
 
 export async function updateTeacherProfile(

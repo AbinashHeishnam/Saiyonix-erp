@@ -1,13 +1,13 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
 import {
   getParentDashboard,
   getStudentDashboard,
   getTeacherDashboard,
-} from "./service";
+} from "@/modules/dashboard/service";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {

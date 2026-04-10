@@ -1,6 +1,6 @@
-import prisma from "../../../core/db/prisma";
-import { ApiError } from "../../../core/errors/apiError";
-import type { NotificationPayload } from "../types";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import type { NotificationPayload } from "@/modules/notification/types";
 
 export async function resolveSection(
   payload: NotificationPayload

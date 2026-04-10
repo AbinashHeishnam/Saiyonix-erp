@@ -1,13 +1,29 @@
 import { Router } from "express";
 
 import { authMiddleware } from "../../middleware/auth.middleware";
+import type { AuthRequest } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { validate } from "../../middleware/validate.middleware";
-import { list, markAllRead, markRead, send, unreadCount } from "./controller";
-import { sendNotificationSchema } from "./send.validation";
+import { list, markAllRead, markRead, send, unreadCount } from "@/modules/notification/controller";
+import { sendNotificationSchema } from "@/modules/notification/send.validation";
+import { listNotificationQuerySchema, notificationIdParamSchema } from "@/modules/notification/validation";
+import { enqueuePushJob } from "@/modules/notification/service";
+import { env } from "@/config/env";
 
 const notificationRouter = Router();
+
+const allowNotificationUpdate = (req: Parameters<typeof authMiddleware>[0], res: Parameters<typeof authMiddleware>[1], next: Parameters<typeof authMiddleware>[2]) => {
+  try {
+    const role = (req.user as { roleType?: string; role?: string } | undefined)?.roleType ?? (req.user as { role?: string } | undefined)?.role;
+    if (role === "STUDENT" || role === "PARENT" || role === "TEACHER") {
+      return next();
+    }
+    return requirePermission("notification:update")(req, res, next);
+  } catch (err) {
+    return next(err);
+  }
+};
 
 notificationRouter.get(
   "/",
@@ -22,6 +38,7 @@ notificationRouter.get(
     "STUDENT"
   ),
   requirePermission("notification:read"),
+  validate({ query: listNotificationQuerySchema }),
   list
 );
 
@@ -62,7 +79,8 @@ notificationRouter.post(
     "PARENT",
     "STUDENT"
   ),
-  requirePermission("notification:update"),
+  allowNotificationUpdate,
+  validate({ params: notificationIdParamSchema }),
   markRead
 );
 
@@ -78,8 +96,40 @@ notificationRouter.post(
     "PARENT",
     "STUDENT"
   ),
-  requirePermission("notification:update"),
+  allowNotificationUpdate,
   markAllRead
 );
+
+if (env.NODE_ENV !== "production" && env.DEBUG_ROUTES_ENABLED === "true") {
+  notificationRouter.post(
+    "/test-queue",
+    authMiddleware,
+    allowRoles("ADMIN", "SUPER_ADMIN", "ACADEMIC_SUB_ADMIN", "FINANCE_SUB_ADMIN"),
+    requirePermission("notification:send"),
+    async (req, res, next) => {
+      try {
+        const authReq = req as AuthRequest;
+        const userId = authReq.user?.id || authReq.user?.sub;
+        const schoolId = authReq.user?.schoolId;
+        if (!userId || !schoolId) {
+          return res.status(400).json({
+            success: false,
+            message: "Missing userId or schoolId",
+          });
+        }
+        await enqueuePushJob({
+          userIds: [userId],
+          message: "Test notification from BullMQ",
+          title: "Test",
+          body: "This is a test job",
+          schoolId,
+        });
+        return res.json({ success: true });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+}
 
 export default notificationRouter;

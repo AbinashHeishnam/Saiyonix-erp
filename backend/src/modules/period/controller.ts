@@ -1,17 +1,18 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
 import {
   createPeriod,
   deletePeriod,
   getPeriodById,
   listPeriods,
+  autoGeneratePeriods,
   updatePeriod,
-} from "./service";
-import { periodIdSchema } from "./validation";
+} from "@/modules/period/service";
+import { periodIdSchema } from "@/modules/period/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {
@@ -49,7 +50,9 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
   try {
     const schoolId = getSchoolId(req);
     const pagination = parsePagination(req.query);
-    const { items, total } = await listPeriods(schoolId, pagination);
+    const academicYearId =
+      typeof req.query.academicYearId === "string" ? req.query.academicYearId : undefined;
+    const { items, total } = await listPeriods(schoolId, pagination, academicYearId);
     return success(
       res,
       items,
@@ -90,6 +93,16 @@ export async function remove(req: AuthRequest, res: Response, next: NextFunction
     const id = parseId(req.params.id);
     const data = await deletePeriod(schoolId, id);
     return success(res, data, "Period deleted successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function autoGenerate(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    const data = await autoGeneratePeriods(schoolId, req.body);
+    return success(res, data, "Periods generated successfully", 201);
   } catch (error) {
     return next(error);
   }

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 export const teacherProfileTeacherIdSchema = z.string().uuid();
+export const teacherProfileTeacherIdParamSchema = z
+  .object({ teacherId: teacherProfileTeacherIdSchema })
+  .strict();
 
 export const createTeacherProfileSchema = z.object({
   teacherId: z.string().uuid(),

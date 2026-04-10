@@ -1,17 +1,19 @@
-import { smsConfig } from "../config/externalServices";
-import { logger } from "../../utils/logger";
-import { sendWithTwilio } from "./sms/providers/twilio.provider";
-import { sendWithMsg91 } from "./sms/providers/msg91.provider";
-import type { SmsSendPayload } from "./sms/types";
+import { getSmsConfig } from "@/core/config/externalServices";
+import { logger } from "@/utils/logger";
+import { sendWithTwilio } from "@/core/services/sms/providers/twilio.provider";
+import { sendWithMsg91 } from "@/core/services/sms/providers/msg91.provider";
+import type { SmsSendPayload } from "@/core/services/sms/types";
 
 export type SmsSendInput = {
   phoneNumber: string;
   message: string;
+  context?: "default" | "otp";
 };
 
 type SmsProvider = (payload: SmsSendPayload) => Promise<unknown>;
 
-function resolveProvider(): SmsProvider | null {
+async function resolveProvider(context: "default" | "otp"): Promise<SmsProvider | null> {
+  const smsConfig = await getSmsConfig(context);
   if (!smsConfig.enabled) {
     return null;
   }
@@ -35,7 +37,7 @@ function resolveProvider(): SmsProvider | null {
 }
 
 export async function sendSMS(input: SmsSendInput): Promise<void> {
-  const provider = resolveProvider();
+  const provider = await resolveProvider(input.context ?? "default");
   if (!provider) {
     logger.info("SMS provider disabled; skipping send");
     return;

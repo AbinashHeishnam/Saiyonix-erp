@@ -1,0 +1,118 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  darkMode: "class",
+  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  theme: {
+    extend: {
+      screens: {
+        xs: "475px",
+      },
+      fontFamily: {
+        display: ["Sora", "ui-sans-serif", "system-ui"],
+        body: ["Manrope", "ui-sans-serif", "system-ui"],
+      },
+      colors: {
+        ink: {
+          50: "#f6f7fb",
+          100: "#e8ebf5",
+          200: "#cdd4ea",
+          300: "#aab4d6",
+          400: "#7a88b9",
+          500: "#5862a3",
+          600: "#444b86",
+          700: "#373c6a",
+          800: "#2a2f52",
+          900: "#1e223c",
+        },
+        jade: {
+          50: "#f1fbf7",
+          100: "#dcf5ea",
+          200: "#b3e8d2",
+          300: "#7fd6b5",
+          400: "#49c196",
+          500: "#2ea67d",
+          600: "#238666",
+          700: "#1f6a53",
+          800: "#1c5242",
+          900: "#153b31",
+        },
+        sunrise: {
+          50: "#fff6ed",
+          100: "#ffe7d1",
+          200: "#ffcaa3",
+          300: "#ffa870",
+          400: "#ff8238",
+          500: "#f35f16",
+          600: "#d4470c",
+          700: "#ad340c",
+          800: "#87290f",
+          900: "#6b230f",
+        },
+        sky: {
+          50: "#f0f7ff",
+          100: "#dbeafe",
+          200: "#bdd5ff",
+          300: "#8ebfff",
+          400: "#599eff",
+          500: "#3b82f6",
+          600: "#2563eb",
+          700: "#1d4ed8",
+        },
+        rose: {
+          50: "#fff1f2",
+          100: "#ffe4e6",
+          200: "#fecdd3",
+          300: "#fda4af",
+          400: "#fb7185",
+          500: "#f43f5e",
+          600: "#e11d48",
+          700: "#be123c",
+        },
+        purple: {
+          50: "#faf5ff",
+          100: "#f3e8ff",
+          200: "#e9d5ff",
+          300: "#d8b4fe",
+          400: "#c084fc",
+          500: "#a855f7",
+          600: "#9333ea",
+          700: "#7e22ce",
+        },
+      },
+      boxShadow: {
+        glow: "0 16px 40px rgba(38, 59, 118, 0.18)",
+        soft: "0 1px 3px rgba(30, 34, 60, 0.06), 0 8px 24px rgba(30, 34, 60, 0.04)",
+        card: "0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.03)",
+        "card-hover": "0 4px 12px rgba(0, 0, 0, 0.06), 0 8px 32px rgba(0, 0, 0, 0.05)",
+        modal: "0 24px 64px rgba(0, 0, 0, 0.12)",
+        "bottom-nav": "0 -1px 3px rgba(0, 0, 0, 0.05), 0 -4px 16px rgba(0, 0, 0, 0.03)",
+      },
+      borderRadius: {
+        xl: "1rem",
+        "2xl": "1.25rem",
+      },
+      transitionDuration: {
+        250: "250ms",
+      },
+      spacing: {
+        "safe-bottom": "env(safe-area-inset-bottom, 0px)",
+      },
+      animation: {
+        "slide-in-left": "slideInLeft 0.3s ease-out",
+        "bounce-in": "bounceIn 0.4s ease-out",
+      },
+      keyframes: {
+        slideInLeft: {
+          from: { opacity: "0", transform: "translateX(-20px)" },
+          to: { opacity: "1", transform: "translateX(0)" },
+        },
+        bounceIn: {
+          "0%": { opacity: "0", transform: "scale(0.9)" },
+          "50%": { transform: "scale(1.02)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
+      },
+    },
+  },
+  plugins: [],
+};

@@ -1,6 +1,6 @@
 import { PutObjectCommand, DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
-import type { StorageConfig } from "../../../config/externalServices";
+import type { StorageConfig } from "@/core/config/externalServices";
 
 export type StorageUploadPayload = {
   buffer: Buffer;

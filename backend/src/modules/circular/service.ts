@@ -1,10 +1,10 @@
 import { Prisma } from "@prisma/client";
 import type { Circular, UserRole } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import { logAudit } from "../../utils/audit";
-import type { CreateCircularInput, UpdateCircularInput } from "./validation";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { logAudit } from "@/utils/audit";
+import type { CreateCircularInput, UpdateCircularInput } from "@/modules/circular/validation";
 
 type CircularFilters = {
   classId?: string;

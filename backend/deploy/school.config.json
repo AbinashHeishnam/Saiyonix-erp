@@ -1,28 +1,14 @@
 {
-  "postgres": {
-    "host": "localhost",
-    "port": 5432,
-    "adminUser": "postgres",
-    "adminPassword": "9366"
-  },
-  "database": {
-    "dbName": "saiyonix_erp",
-    "dbUser": "erp_school",
-    "dbPassword": "StrongDBPass123"
-  },
   "school": {
     "name": "Catholic School Canchipur"
   },
   "admin": {
-    "email": "admin@canchipur.edu",
-    "password": "AdminPass123"
+    "email": "admin@canchipur.edu"
   },
   "academicSubAdmin": {
-    "email": "academic@canchipur.edu",
-    "password": "AcademicPass123"
+    "email": "academic@canchipur.edu"
   },
   "financeSubAdmin": {
-    "email": "finance@canchipur.edu",
-    "password": "FinancePass123"
+    "email": "finance@canchipur.edu"
   }
 }

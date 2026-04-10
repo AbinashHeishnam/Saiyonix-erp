@@ -4,8 +4,12 @@ import { authMiddleware } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { validate } from "../../middleware/validate.middleware";
-import { approve, cancel, create, getById, list, reject, timeline } from "./controller";
-import { createTeacherLeaveSchema } from "./validation";
+import { approve, cancel, create, getById, list, reject, timeline } from "@/modules/teacherLeave/controller";
+import {
+  createTeacherLeaveSchema,
+  listTeacherLeaveQuerySchema,
+  teacherLeaveIdParamSchema,
+} from "@/modules/teacherLeave/validation";
 
 const teacherLeaveRouter = Router();
 
@@ -23,6 +27,7 @@ teacherLeaveRouter.get(
   authMiddleware,
   allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
   requirePermission("teacherLeave:read"),
+  validate({ query: listTeacherLeaveQuerySchema }),
   list
 );
 
@@ -31,6 +36,7 @@ teacherLeaveRouter.get(
   authMiddleware,
   allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
   requirePermission("teacherLeave:read"),
+  validate({ params: teacherLeaveIdParamSchema }),
   timeline
 );
 
@@ -39,6 +45,7 @@ teacherLeaveRouter.get(
   authMiddleware,
   allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"),
   requirePermission("teacherLeave:read"),
+  validate({ params: teacherLeaveIdParamSchema }),
   getById
 );
 
@@ -47,6 +54,7 @@ teacherLeaveRouter.patch(
   authMiddleware,
   allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("teacherLeave:update"),
+  validate({ params: teacherLeaveIdParamSchema }),
   approve
 );
 
@@ -55,6 +63,7 @@ teacherLeaveRouter.patch(
   authMiddleware,
   allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"),
   requirePermission("teacherLeave:update"),
+  validate({ params: teacherLeaveIdParamSchema }),
   reject
 );
 
@@ -63,6 +72,7 @@ teacherLeaveRouter.patch(
   authMiddleware,
   allowRoles("TEACHER"),
   requirePermission("teacherLeave:update"),
+  validate({ params: teacherLeaveIdParamSchema }),
   cancel
 );
 

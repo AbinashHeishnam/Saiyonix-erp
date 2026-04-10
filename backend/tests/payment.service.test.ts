@@ -1,6 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const originalEnv = { ...process.env };
+const razorpayMocks = vi.hoisted(() => ({
+  createSpy: vi.fn(),
+}));
+
+vi.mock("razorpay", () => ({
+  default: vi.fn().mockImplementation(() => ({
+    orders: {
+      create: razorpayMocks.createSpy,
+    },
+  })),
+}));
 
 function setBaseEnv() {
   process.env.DATABASE_URL =
@@ -12,6 +23,7 @@ afterEach(() => {
   process.env = { ...originalEnv };
   vi.restoreAllMocks();
   vi.resetModules();
+  razorpayMocks.createSpy.mockReset();
 });
 
 describe("payment.service", () => {
@@ -60,12 +72,11 @@ describe("payment.service", () => {
     process.env.RAZORPAY_KEY_ID = "key";
     process.env.RAZORPAY_KEY_SECRET = "secret";
 
-    const fetchSpy = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: "order_1", amount: 1000, currency: "INR" }),
+    razorpayMocks.createSpy.mockResolvedValue({
+      id: "order_1",
+      amount: 1000,
+      currency: "INR",
     });
-    // @ts-expect-error test override
-    globalThis.fetch = fetchSpy;
 
     const { PaymentService } = await import("../src/core/services/payment.service");
 
@@ -76,6 +87,12 @@ describe("payment.service", () => {
     });
 
     expect(result.id).toBe("order_1");
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(razorpayMocks.createSpy).toHaveBeenCalledTimes(1);
+    expect(razorpayMocks.createSpy).toHaveBeenCalledWith({
+      amount: 1000,
+      currency: "INR",
+      receipt: "rcpt-1",
+      notes: undefined,
+    });
   });
 });

@@ -2,11 +2,11 @@ import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
 
-import { storageConfig } from "../config/externalServices";
-import { logger } from "../../utils/logger";
-import { createS3Provider } from "./storage/providers/s3.provider";
-import { createR2Provider } from "./storage/providers/r2.provider";
-import { createMinioProvider } from "./storage/providers/minio.provider";
+import { storageConfig } from "@/core/config/externalServices";
+import { logger } from "@/utils/logger";
+import { createS3Provider } from "@/core/services/storage/providers/s3.provider";
+import { createR2Provider } from "@/core/services/storage/providers/r2.provider";
+import { createMinioProvider } from "@/core/services/storage/providers/minio.provider";
 
 export type UploadFileInput = {
   buffer: Buffer;
@@ -26,6 +26,13 @@ type StorageProvider = {
 };
 
 const localRoot = path.join(process.cwd(), "uploads");
+
+function sanitizeFileName(name: string) {
+  const base = path.basename(name);
+  const sanitized = base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-").slice(0, 120);
+  const trimmed = sanitized.replace(/^\.+/, "").replace(/^-+/, "").trim();
+  return trimmed.length > 0 ? trimmed : "file";
+}
 
 function resolveProvider(): StorageProvider {
   if (!storageConfig.enabled) {
@@ -55,7 +62,7 @@ function buildLocalPath(fileKey: string) {
 
 function createLocalProvider(): StorageProvider {
   async function upload(payload: UploadFileInput): Promise<UploadFileResult> {
-    const safeName = payload.fileName.replace(/\s+/g, "-");
+    const safeName = sanitizeFileName(payload.fileName);
     const uniqueName = `${crypto.randomUUID()}-${safeName}`;
     const fileKey = payload.folder ? path.join(payload.folder, uniqueName) : uniqueName;
     const fullPath = buildLocalPath(fileKey);
@@ -80,7 +87,8 @@ function createLocalProvider(): StorageProvider {
 export const StorageService = {
   async uploadFile(input: UploadFileInput): Promise<UploadFileResult> {
     const provider = resolveProvider();
-    return provider.upload(input);
+    const safeInput = { ...input, fileName: sanitizeFileName(input.fileName) };
+    return provider.upload(safeInput);
   },
 
   async deleteFile(fileKeyOrUrl: string): Promise<void> {

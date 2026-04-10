@@ -1,0 +1,38 @@
+import { Queue } from "bullmq";
+
+import { getRedis } from "@/core/redis";
+import { createBullMQConnection } from "@/core/queue/redisBullmq";
+
+let notificationQueue: Queue | null = null;
+
+export async function getNotificationQueue(): Promise<Queue | null> {
+  if (notificationQueue) {
+    return notificationQueue;
+  }
+
+  const redis = await getRedis();
+  if (!redis) {
+    return null;
+  }
+
+  let connection;
+  try {
+    connection = createBullMQConnection();
+  } catch (err) {
+    console.error("[queue] BullMQ connection init failed", err);
+    return null;
+  }
+
+  notificationQueue = new Queue("notifications", {
+    connection,
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 1000,
+      removeOnFail: 5000,
+    },
+  });
+  void notificationQueue.client?.then((client) => client.on("error", () => {})).catch(() => {});
+
+  return notificationQueue;
+}

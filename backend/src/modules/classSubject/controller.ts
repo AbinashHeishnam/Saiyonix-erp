@@ -1,17 +1,17 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
 import {
   createClassSubject,
   deleteClassSubject,
   getClassSubjectById,
   listClassSubjects,
   updateClassSubject,
-} from "./service";
-import { classSubjectIdSchema } from "./validation";
+} from "@/modules/classSubject/service";
+import { classSubjectIdSchema } from "@/modules/classSubject/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {

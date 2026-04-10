@@ -188,6 +188,7 @@ const options: swaggerJSDoc.Options = {
                   required: ["mobile"],
                   properties: {
                     mobile: { type: "string" },
+                    channel: { type: "string", enum: ["sms"], default: "sms" },
                   },
                 },
               },

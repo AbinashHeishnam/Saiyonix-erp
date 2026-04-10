@@ -1,8 +1,34 @@
 import { z } from "zod";
 
-export const studentIdSchema = z.string().uuid();
+import { paginationQuerySchema } from "@/utils/pagination";
 
-const studentStatusSchema = z.enum(["ACTIVE", "TRANSFERRED", "EXPELLED", "GRADUATED"]);
+export const studentIdSchema = z.string().uuid();
+export const studentIdParamSchema = z.object({ id: studentIdSchema }).strict();
+export const listStudentQuerySchema = paginationQuerySchema.extend({
+  classId: z.string().uuid().optional(),
+  sectionId: z.string().uuid().optional(),
+  academicYearId: z.string().uuid().optional(),
+});
+
+export const rollAssignSchema = z
+  .object({
+    academicYearId: z.string().uuid().optional(),
+    sectionId: z.string().uuid().optional(),
+    classId: z.string().uuid().optional(),
+  })
+  .refine((data) => data.sectionId || data.classId, {
+    message: "sectionId or classId is required",
+    path: ["sectionId"],
+  })
+  .strict();
+
+const studentStatusSchema = z.enum([
+  "ACTIVE",
+  "INACTIVE",
+  "TRANSFERRED",
+  "EXPELLED",
+  "GRADUATED",
+]);
 
 const jsonValueSchema = z.unknown().refine(
   (value) => {
@@ -74,6 +100,27 @@ export const updateStudentSchema = z
     parentId: z.string().uuid().optional(),
     parent: parentSchema.optional(),
     enrollment: enrollmentSchema.partial().optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "At least one field is required",
+  });
+
+export const studentIdCardUpdateSchema = z.object({
+  fullName: z.string().trim().min(1),
+});
+
+export const studentIdCardDetailsSchema = z
+  .object({
+    fullName: z.string().trim().min(1).optional(),
+    admissionNumber: z.string().trim().min(1).optional(),
+    dateOfBirth: z.coerce.date().optional(),
+    bloodGroup: z.string().trim().min(1).optional(),
+    address: z.string().trim().min(1).optional(),
+    parentName: z.string().trim().min(1).optional(),
+    parentPhone: z.string().trim().min(5).optional(),
+    classId: z.string().uuid().optional(),
+    sectionId: z.string().uuid().optional(),
+    rollNumber: z.number().int().positive().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field is required",

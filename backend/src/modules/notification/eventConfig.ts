@@ -1,6 +1,6 @@
 import { NotificationPriority } from "@prisma/client";
 
-import type { EventConfig, EventType } from "./types";
+import type { EventConfig, EventType } from "@/modules/notification/types";
 
 export const eventConfig: Record<EventType, EventConfig> = {
   SCHOOL_BROADCAST: {
@@ -52,6 +52,20 @@ export const eventConfig: Record<EventType, EventConfig> = {
     deliveryChannels: ["IN_APP"],
     resolver: { type: "USER_LIST" },
   },
+  ASSIGNMENT_PUBLISHED: {
+    eventType: "ASSIGNMENT_PUBLISHED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "STUDENT_WITH_PARENTS", includeParents: true, includeStudent: true },
+  },
+  NOTE_PUBLISHED: {
+    eventType: "NOTE_PUBLISHED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "STUDENT_WITH_PARENTS", includeParents: true, includeStudent: true },
+  },
   LEAVE_REQUEST_SUBMITTED: {
     eventType: "LEAVE_REQUEST_SUBMITTED",
     priority: NotificationPriority.MEDIUM,
@@ -78,6 +92,134 @@ export const eventConfig: Record<EventType, EventConfig> = {
     priority: NotificationPriority.MEDIUM,
     category: "ACADEMIC",
     deliveryChannels: ["IN_APP", "PUSH", "SMS"],
+    resolver: { type: "USER_LIST" },
+  },
+  SUBSTITUTION_ASSIGNED: {
+    eventType: "SUBSTITUTION_ASSIGNED",
+    priority: NotificationPriority.HIGH,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP", "PUSH", "SMS"],
+    resolver: { type: "USER_LIST" },
+  },
+  PROMOTION_CRITERIA_PUBLISHED: {
+    eventType: "PROMOTION_CRITERIA_PUBLISHED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: {
+      type: "ROLE_ALL",
+      roles: ["SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"],
+    },
+  },
+  PROMOTION_PUBLISHED: {
+    eventType: "PROMOTION_PUBLISHED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "STUDENT_WITH_PARENTS", includeParents: true, includeStudent: true },
+  },
+  PROMOTION_UNDER_CONSIDERATION: {
+    eventType: "PROMOTION_UNDER_CONSIDERATION",
+    priority: NotificationPriority.HIGH,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: {
+      type: "ROLE_ALL",
+      roles: ["SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"],
+    },
+  },
+  MARKS_SUBMITTED: {
+    eventType: "MARKS_SUBMITTED",
+    priority: NotificationPriority.MEDIUM,
+    category: "EXAM",
+    deliveryChannels: ["IN_APP"],
+    resolver: {
+      type: "ROLE_ALL",
+      roles: ["SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"],
+    },
+  },
+  STUDENT_PROMOTED: {
+    eventType: "STUDENT_PROMOTED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP", "PUSH", "SMS"],
+    resolver: { type: "STUDENT_WITH_PARENTS", includeParents: true, includeStudent: true },
+  },
+  TIMETABLE_UPDATED: {
+    eventType: "TIMETABLE_UPDATED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "USER_LIST" },
+  },
+  CLASS_TEACHER_ASSIGNED: {
+    eventType: "CLASS_TEACHER_ASSIGNED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "USER_LIST" },
+  },
+  CLASS_SUBJECT_ASSIGNED: {
+    eventType: "CLASS_SUBJECT_ASSIGNED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "USER_LIST" },
+  },
+  CLASS_ASSIGNED: {
+    eventType: "CLASS_ASSIGNED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "STUDENT_WITH_PARENTS", includeParents: true, includeStudent: true },
+  },
+  EXAM_SCHEDULE_PUBLISHED: {
+    eventType: "EXAM_SCHEDULE_PUBLISHED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "USER_LIST" },
+  },
+  EXAM_ROOM_PUBLISHED: {
+    eventType: "EXAM_ROOM_PUBLISHED",
+    priority: NotificationPriority.MEDIUM,
+    category: "ACADEMIC",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "USER_LIST" },
+  },
+  FEE_PUBLISHED: {
+    eventType: "FEE_PUBLISHED",
+    priority: NotificationPriority.MEDIUM,
+    category: "FEE",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "USER_LIST" },
+  },
+  FEE_STATUS_UPDATED: {
+    eventType: "FEE_STATUS_UPDATED",
+    priority: NotificationPriority.MEDIUM,
+    category: "FEE",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "STUDENT_WITH_PARENTS", includeParents: true, includeStudent: true },
+  },
+  ADMIT_CARD_PUBLISHED: {
+    eventType: "ADMIT_CARD_PUBLISHED",
+    priority: NotificationPriority.MEDIUM,
+    category: "EXAM",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "USER_LIST" },
+  },
+  ADMIT_CARD_UNLOCKED: {
+    eventType: "ADMIT_CARD_UNLOCKED",
+    priority: NotificationPriority.MEDIUM,
+    category: "EXAM",
+    deliveryChannels: ["IN_APP"],
+    resolver: { type: "STUDENT_WITH_PARENTS", includeParents: true, includeStudent: true },
+  },
+  RESULT_PUBLISHED: {
+    eventType: "RESULT_PUBLISHED",
+    priority: NotificationPriority.MEDIUM,
+    category: "EXAM",
+    deliveryChannels: ["IN_APP"],
     resolver: { type: "USER_LIST" },
   },
 };

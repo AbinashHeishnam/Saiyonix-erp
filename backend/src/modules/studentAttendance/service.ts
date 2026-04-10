@@ -1,14 +1,15 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import { markAttendance, updateAttendance } from "../attendance/service";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { toLocalDateOnly } from "@/core/utils/localDate";
+import { markAttendance, updateAttendance } from "@/modules/attendance/service";
 import type {
   CreateStudentAttendanceInput,
   UpdateStudentAttendanceInput,
-} from "./validation";
+} from "@/modules/studentAttendance/validation";
 
-type DbClient = Prisma.TransactionClient | typeof prisma;
+type DbClient = typeof prisma;
 
 type AttendanceFilters = {
   studentId?: string;
@@ -94,30 +95,17 @@ async function ensureSectionBelongsToSchool(
   return section;
 }
 
-async function ensureTimetableSlotBelongsToSection(
-  client: DbClient,
-  schoolId: string,
-  timetableSlotId: string,
-  sectionId: string,
-  academicYearId: string
-) {
-  const slot = await client.timetableSlot.findFirst({
-    where: {
-      id: timetableSlotId,
-      sectionId,
-      academicYearId,
-      section: { class: { schoolId, deletedAt: null }, deletedAt: null },
-      classSubject: {
-        class: { schoolId, deletedAt: null },
-        subject: { schoolId },
-      },
-    },
+async function getActiveAcademicYearId(client: DbClient, schoolId: string) {
+  const academicYear = await client.academicYear.findFirst({
+    where: { schoolId, isActive: true },
     select: { id: true },
   });
 
-  if (!slot) {
-    throw new ApiError(400, "Timetable slot not found for this section");
+  if (!academicYear) {
+    throw new ApiError(400, "Active academic year not found");
   }
+
+  return academicYear.id;
 }
 
 async function resolveTeacherId(
@@ -175,35 +163,72 @@ async function ensureStudentsInSection(
   }
 }
 
-async function ensureAttendanceNotMarked(
+async function findExistingStudentAttendance(
   client: DbClient,
   params: { studentIds: string[]; attendanceDate: Date }
 ) {
-  const existing = await client.studentAttendance.findMany({
+  return client.studentAttendance.findMany({
     where: {
       studentId: { in: params.studentIds },
       attendanceDate: params.attendanceDate,
     },
     select: { studentId: true },
   });
+}
 
-  if (existing.length > 0) {
-    throw new ApiError(409, "Attendance already marked for some students");
-  }
+async function findSectionAttendance(
+  client: DbClient,
+  params: { sectionId: string; attendanceDate: Date }
+) {
+  return client.sectionAttendance.findFirst({
+    where: {
+      sectionId: params.sectionId,
+      attendanceDate: params.attendanceDate,
+    },
+    select: { id: true },
+  });
 }
 
 async function ensureTeacherIsClassTeacher(
   client: DbClient,
   sectionId: string,
-  teacherId: string
+  teacherId: string,
+  attendanceDate: Date,
+  timeZone: string
 ) {
   const section = await client.section.findFirst({
-    where: { id: sectionId, classTeacherId: teacherId, deletedAt: null },
-    select: { id: true },
+    where: { id: sectionId, deletedAt: null },
+    select: { id: true, classTeacherId: true },
   });
 
   if (!section) {
-    throw new ApiError(403, "Only class teacher can mark attendance");
+    throw new ApiError(404, "Section not found");
+  }
+
+  if (section.classTeacherId !== teacherId) {
+    const dateOnly = toLocalDateOnly(attendanceDate, timeZone);
+    const substitution = await client.substitution.findFirst({
+      where: {
+        sectionId,
+        date: dateOnly,
+        substituteTeacherId: teacherId,
+      },
+      select: { id: true, isClassTeacherSubstitution: true, absentTeacherId: true },
+    });
+    console.log({
+      teacherId,
+      sectionClassTeacher: section.classTeacherId,
+      substitution,
+      dateOnly,
+    });
+    const isClassTeacher = section.classTeacherId === teacherId;
+    const isValidSubstitute =
+      substitution &&
+      (substitution.isClassTeacherSubstitution === true ||
+        substitution.absentTeacherId === section.classTeacherId);
+    if (!isClassTeacher && !isValidSubstitute) {
+      throw new ApiError(403, "Not allowed to mark attendance");
+    }
   }
 }
 
@@ -224,28 +249,35 @@ export async function markStudentAttendance(
     const studentIds = payload.records.map((record) => record.studentId);
 
     return await prisma.$transaction(async (tx) => {
-      await ensureAcademicYearBelongsToSchool(tx, schoolId, payload.academicYearId);
+      const db = tx as DbClient;
+      const school = await tx.school.findUnique({
+        where: { id: schoolId },
+        select: { timezone: true },
+      });
+      const timeZone = school?.timezone ?? "Asia/Kolkata";
+      const academicYearId =
+        payload.academicYearId ?? (await getActiveAcademicYearId(db, schoolId));
+      await ensureAcademicYearBelongsToSchool(db, schoolId, academicYearId);
       const section = await ensureSectionBelongsToSchool(
-        tx,
+        db,
         schoolId,
         payload.sectionId
       );
-      await ensureTimetableSlotBelongsToSection(
-        tx,
-        schoolId,
-        payload.timetableSlotId,
-        payload.sectionId,
-        payload.academicYearId
-      );
 
-      const teacherId = await resolveTeacherId(tx, schoolId, {
+      const teacherId = await resolveTeacherId(db, schoolId, {
         roleType: actor.roleType,
         userId: actor.userId,
         markedByTeacherId: payload.markedByTeacherId,
       });
 
       if (actor.roleType === "TEACHER") {
-        await ensureTeacherIsClassTeacher(tx, payload.sectionId, teacherId);
+        await ensureTeacherIsClassTeacher(
+          db,
+          payload.sectionId,
+          teacherId,
+          attendanceDate,
+          timeZone
+        );
       }
 
       if (section.classTeacherId && actor.roleType !== "TEACHER") {
@@ -255,19 +287,46 @@ export async function markStudentAttendance(
         }
       }
 
-      await ensureStudentsInSection(tx, {
+      await ensureStudentsInSection(db, {
         studentIds,
         sectionId: payload.sectionId,
-        academicYearId: payload.academicYearId,
+        academicYearId,
       });
 
-      await ensureAttendanceNotMarked(tx, { studentIds, attendanceDate });
+      const existingAttendance = await findExistingStudentAttendance(db, {
+        studentIds,
+        attendanceDate,
+      });
+      if (existingAttendance.length === studentIds.length) {
+        throw new ApiError(409, "Attendance already marked for all students");
+      }
+      const existingSet = new Set(existingAttendance.map((item) => item.studentId));
+      const recordsToCreate = payload.records.filter(
+        (record) => !existingSet.has(record.studentId)
+      );
+      if (recordsToCreate.length === 0) {
+        throw new ApiError(409, "Attendance already marked for all students");
+      }
 
-      const entries = payload.records.map((record) => ({
-        studentId: record.studentId,
-        academicYearId: payload.academicYearId,
+      const existingSection = await findSectionAttendance(db, {
         sectionId: payload.sectionId,
-        timetableSlotId: payload.timetableSlotId,
+        attendanceDate,
+      });
+      if (!existingSection) {
+        await tx.sectionAttendance.create({
+          data: {
+            sectionId: payload.sectionId,
+            academicYearId,
+            attendanceDate,
+            markedByTeacherId: teacherId,
+          },
+        });
+      }
+
+      const entries = recordsToCreate.map((record) => ({
+        studentId: record.studentId,
+        academicYearId,
+        sectionId: payload.sectionId,
         attendanceDate,
         status: record.status,
         markedByTeacherId: teacherId,
@@ -282,9 +341,8 @@ export async function markStudentAttendance(
         where: {
           studentId: { in: studentIds },
           attendanceDate,
-          academicYearId: payload.academicYearId,
+          academicYearId,
           sectionId: payload.sectionId,
-          timetableSlotId: payload.timetableSlotId,
         },
       });
     });
@@ -326,6 +384,11 @@ export async function listStudentAttendance(
       select: {
         id: true,
         studentId: true,
+        student: {
+          select: {
+            fullName: true,
+          },
+        },
         attendanceDate: true,
         status: true,
         remarks: true,
@@ -417,7 +480,34 @@ export async function updateStudentAttendance(
           throw new ApiError(403, "Teacher account not linked");
         }
         if (record.section.classTeacherId !== teacher.id) {
-          throw new ApiError(403, "Only class teacher can edit attendance");
+          const school = await tx.school.findUnique({
+            where: { id: schoolId },
+            select: { timezone: true },
+          });
+          const timeZone = school?.timezone ?? "Asia/Kolkata";
+          const dateOnly = toLocalDateOnly(record.attendanceDate, timeZone);
+          const substitution = await tx.substitution.findFirst({
+            where: {
+              sectionId: record.sectionId,
+              date: dateOnly,
+              substituteTeacherId: teacher.id,
+            },
+            select: { id: true, isClassTeacherSubstitution: true, absentTeacherId: true },
+          });
+          console.log({
+            teacherId: teacher.id,
+            sectionClassTeacher: record.section.classTeacherId,
+            substitution,
+            dateOnly,
+          });
+          const isClassTeacher = record.section.classTeacherId === teacher.id;
+          const isValidSubstitute =
+            substitution &&
+            (substitution.isClassTeacherSubstitution === true ||
+              substitution.absentTeacherId === record.section.classTeacherId);
+          if (!isClassTeacher && !isValidSubstitute) {
+            throw new ApiError(403, "Not allowed to mark attendance");
+          }
         }
       }
 

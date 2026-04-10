@@ -8,10 +8,29 @@ export const EVENT_TYPES = [
   "STUDENT_ALERT",
   "CLASS_SUBJECT_ALERT",
   "USER_MESSAGE",
+  "ASSIGNMENT_PUBLISHED",
+  "NOTE_PUBLISHED",
   "LEAVE_REQUEST_SUBMITTED",
   "LEAVE_REQUEST_APPROVED",
   "LEAVE_REQUEST_REJECTED",
   "LEAVE_REQUEST_CANCELLED",
+  "SUBSTITUTION_ASSIGNED",
+  "PROMOTION_CRITERIA_PUBLISHED",
+  "PROMOTION_PUBLISHED",
+  "PROMOTION_UNDER_CONSIDERATION",
+  "MARKS_SUBMITTED",
+  "STUDENT_PROMOTED",
+  "TIMETABLE_UPDATED",
+  "CLASS_TEACHER_ASSIGNED",
+  "CLASS_SUBJECT_ASSIGNED",
+  "CLASS_ASSIGNED",
+  "EXAM_SCHEDULE_PUBLISHED",
+  "EXAM_ROOM_PUBLISHED",
+  "FEE_PUBLISHED",
+  "FEE_STATUS_UPDATED",
+  "ADMIT_CARD_PUBLISHED",
+  "ADMIT_CARD_UNLOCKED",
+  "RESULT_PUBLISHED",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
@@ -39,9 +58,13 @@ export type NotificationPayload = {
   schoolId: string;
   sentById?: string;
   scheduledAt?: Date;
+  linkUrl?: string;
+  entityType?: string;
+  entityId?: string;
   title?: string;
   body?: string;
   message?: string;
+  academicYearId?: string;
   classId?: string;
   className?: string;
   sectionId?: string;

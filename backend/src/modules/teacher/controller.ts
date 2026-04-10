@@ -1,20 +1,28 @@
 import type { NextFunction, Response } from "express";
 
 import type { AuthRequest } from "../../middleware/auth.middleware";
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import { success } from "../../utils/apiResponse";
-import { buildPaginationMeta, parsePagination } from "../../utils/pagination";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { success } from "@/utils/apiResponse";
+import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
 import {
   createTeacher as createTeacherService,
   deleteTeacher as deleteTeacherService,
   getTeacherById as getTeacherByIdService,
+  getTeacherProfileById as getTeacherProfileByIdService,
+  getTeacherProfileByUserId as getTeacherProfileByUserIdService,
+  getTeacherPublicProfile as getTeacherPublicProfileService,
   getTeachers as getTeachersService,
   updateTeacher as updateTeacherService,
+  updateTeacherProfileById as updateTeacherProfileByIdService,
   updateTeacherStatus as updateTeacherStatusService,
   getTeacherTimetable as getTeacherTimetableService,
-} from "./service";
-import { teacherIdSchema } from "./validation";
+  listTeacherIdCardsForAdmin,
+  getTeacherIdCardForUser,
+  updateTeacherIdCardDetailsAdmin,
+  updateTeacherIdCardPhotoAdmin,
+} from "@/modules/teacher/service";
+import { teacherIdSchema, teacherIdCardDetailsSchema } from "@/modules/teacher/validation";
 
 function getSchoolId(req: AuthRequest) {
   if (!req.schoolId) {
@@ -22,6 +30,13 @@ function getSchoolId(req: AuthRequest) {
   }
 
   return req.schoolId;
+}
+
+function getActor(req: AuthRequest) {
+  return {
+    userId: req.user?.sub,
+    roleType: req.user?.roleType,
+  };
 }
 
 function parseId(id: unknown) {
@@ -36,6 +51,13 @@ function parseId(id: unknown) {
   }
 
   return parsed.data;
+}
+
+function toSecureFileUrl(value?: string | null) {
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith("/api/v1/files/secure")) return value;
+  return `/api/v1/files/secure?fileUrl=${encodeURIComponent(value)}`;
 }
 
 async function ensureTeacherSelfAccess(
@@ -80,8 +102,13 @@ export async function createTeacher(req: AuthRequest, res: Response, next: NextF
 export async function listTeachers(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const schoolId = getSchoolId(req);
+    if ("page" in req.query || "limit" in req.query) {
+      console.log("[Phase1] Pagination applied");
+    }
     const pagination = parsePagination(req.query);
-    const { items, total } = await getTeachersService(schoolId, pagination);
+    const academicYearId =
+      typeof req.query.academicYearId === "string" ? req.query.academicYearId : undefined;
+    const { items, total } = await getTeachersService(schoolId, academicYearId, pagination);
     return success(
       res,
       items,
@@ -153,6 +180,220 @@ export async function getTeacherTimetable(
     await ensureTeacherSelfAccess(req, schoolId, id);
     const data = await getTeacherTimetableService(schoolId, id);
     return success(res, data, "Teacher timetable fetched successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getTeacherProfile(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const roleType = req.user?.roleType;
+    if (!roleType) {
+      throw new ApiError(401, "Unauthorized");
+    }
+
+    if (roleType === "TEACHER") {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new ApiError(401, "Unauthorized");
+      }
+      const data = await getTeacherProfileByUserIdService(schoolId, userId);
+      return success(res, data, "Teacher profile fetched successfully");
+    }
+
+    if (roleType === "ADMIN" || roleType === "SUPER_ADMIN") {
+      const teacherId = req.query.teacherId;
+      if (typeof teacherId !== "string") {
+        throw new ApiError(400, "teacherId is required");
+      }
+      const parsed = teacherIdSchema.safeParse(teacherId);
+      if (!parsed.success) {
+        throw new ApiError(400, "Invalid teacherId");
+      }
+      const data = await getTeacherProfileByIdService(schoolId, parsed.data);
+      return success(res, data, "Teacher profile fetched successfully");
+    }
+
+    throw new ApiError(403, "Forbidden");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function updateTeacherProfile(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const roleType = req.user?.roleType;
+    if (!roleType) {
+      throw new ApiError(401, "Unauthorized");
+    }
+
+    if (roleType === "TEACHER") {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new ApiError(401, "Unauthorized");
+      }
+      const teacher = await prisma.teacher.findFirst({
+        where: { schoolId, userId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!teacher) {
+        throw new ApiError(404, "Teacher not found");
+      }
+      const data = await updateTeacherProfileByIdService(
+        schoolId,
+        teacher.id,
+        req.body
+      );
+      return success(res, data, "Teacher profile updated successfully");
+    }
+
+    if (roleType === "ADMIN" || roleType === "SUPER_ADMIN") {
+      const teacherId = req.body?.teacherId;
+      if (typeof teacherId !== "string") {
+        throw new ApiError(400, "teacherId is required");
+      }
+      const parsed = teacherIdSchema.safeParse(teacherId);
+      if (!parsed.success) {
+        throw new ApiError(400, "Invalid teacherId");
+      }
+      const data = await updateTeacherProfileByIdService(
+        schoolId,
+        parsed.data,
+        req.body
+      );
+      return success(res, data, "Teacher profile updated successfully");
+    }
+
+    throw new ApiError(403, "Forbidden");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function updateTeacherPhoto(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    const actor = getActor(req);
+    if (actor.roleType !== "TEACHER") {
+      throw new ApiError(403, "Forbidden");
+    }
+
+    const uploadedFile = (req as AuthRequest & { uploadedFile?: { fileUrl: string } }).uploadedFile;
+    if (!uploadedFile?.fileUrl) {
+      throw new ApiError(400, "Photo file is required");
+    }
+
+    const teacher = await prisma.teacher.findFirst({
+      where: { schoolId, userId: actor.userId, deletedAt: null },
+      select: { id: true, photoUrl: true },
+    });
+    if (!teacher) {
+      throw new ApiError(404, "Teacher not found");
+    }
+    if (teacher.photoUrl) {
+      throw new ApiError(403, "Photo changes are locked. Contact admin to reset.");
+    }
+
+    await prisma.teacher.update({
+      where: { id: teacher.id },
+      data: { photoUrl: uploadedFile.fileUrl },
+    });
+
+    return success(
+      res,
+      { photoUrl: toSecureFileUrl(uploadedFile.fileUrl) },
+      "Teacher photo updated"
+    );
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getTeacherIdCard(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const schoolId = getSchoolId(req);
+    const userId = req.user?.sub;
+    if (!userId) {
+      throw new ApiError(401, "Unauthorized");
+    }
+    const data = await getTeacherIdCardForUser(schoolId, userId);
+    return success(res, data, "Teacher ID card fetched successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function listAdminTeacherIdCards(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const data = await listTeacherIdCardsForAdmin(schoolId);
+    return success(res, data, "Teacher ID cards fetched successfully");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function updateAdminTeacherIdCardDetails(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const id = parseId(req.params.id);
+    const parsed = teacherIdCardDetailsSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new ApiError(400, "Invalid payload");
+    }
+    const data = await updateTeacherIdCardDetailsAdmin(schoolId, id, parsed.data);
+    return success(res, data, "Teacher ID details updated");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function updateAdminTeacherIdCardPhoto(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const schoolId = getSchoolId(req);
+    const id = parseId(req.params.id);
+    const uploadedFile = (req as AuthRequest & { uploadedFile?: { fileUrl: string } }).uploadedFile;
+    if (!uploadedFile?.fileUrl) {
+      throw new ApiError(400, "Photo file is required");
+    }
+    const data = await updateTeacherIdCardPhotoAdmin(schoolId, id, uploadedFile.fileUrl);
+    return success(res, data, "Teacher ID photo updated");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getTeacherPublicProfile(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseId(req.params.id);
+    const data = await getTeacherPublicProfileService(id);
+    return success(res, data, "Teacher public profile fetched successfully");
   } catch (error) {
     return next(error);
   }

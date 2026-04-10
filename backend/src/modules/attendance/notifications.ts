@@ -1,4 +1,6 @@
-import { trigger as triggerNotification } from "../notification/service";
+import prisma from "@/core/db/prisma";
+import { formatLocalDate } from "@/core/utils/localDate";
+import { trigger as triggerNotification } from "@/modules/notification/service";
 
 export async function notifyAbsence(params: {
   schoolId: string;
@@ -6,17 +8,23 @@ export async function notifyAbsence(params: {
   attendanceDate: Date;
   actorUserId: string;
 }) {
+  const school = await prisma.school.findUnique({
+    where: { id: params.schoolId },
+    select: { timezone: true },
+  });
+  const timeZone = school?.timezone ?? "Asia/Kolkata";
+  const dateLabel = formatLocalDate(params.attendanceDate, timeZone);
   await triggerNotification("STUDENT_ALERT", {
     schoolId: params.schoolId,
     studentId: params.studentId,
     title: "Student Marked Absent",
-    body: `Student marked absent on ${params.attendanceDate
-      .toISOString()
-      .slice(0, 10)}.`,
+    body: `Student marked absent on ${dateLabel}.`,
     sentById: params.actorUserId,
+    entityType: "ATTENDANCE",
+    linkUrl: "/attendance",
     metadata: {
       eventType: "ATTENDANCE_ABSENT",
-      attendanceDate: params.attendanceDate.toISOString().slice(0, 10),
+      attendanceDate: dateLabel,
     },
   });
 }
@@ -38,6 +46,8 @@ export async function notifyThresholdDrop(params: {
         ? "Attendance dropped below 75%. Detention risk warning."
         : `Attendance dropped below ${params.threshold}%. Please monitor attendance.`,
     sentById: params.actorUserId,
+    entityType: "ATTENDANCE",
+    linkUrl: "/attendance",
     metadata: {
       eventType: "ATTENDANCE_THRESHOLD",
       threshold: params.threshold,

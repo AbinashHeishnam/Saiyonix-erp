@@ -1,3 +1,4 @@
-import prisma from "../../config/prisma";
+import prisma, { enforceQueryLimits } from "@/config/prisma";
 
 export default prisma;
+export { enforceQueryLimits };

@@ -1,0 +1,41 @@
+import { Router } from "express";
+
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { requirePermission } from "../../middleware/permission.middleware";
+import { allowRoles } from "../../middleware/rbac.middleware";
+import { heavyJobLimiter } from "../../middleware/rateLimiter.middleware";
+import { validate } from "../../middleware/validate.middleware";
+import { get, getClass, recompute } from "@/modules/ranking/controller";
+import { classRankingParamSchema, examIdParamSchema, rankingQuerySchema } from "@/modules/ranking/validation";
+
+const rankingRouter = Router();
+
+rankingRouter.post(
+  "/:examId/recompute",
+  authMiddleware,
+  heavyJobLimiter,
+  allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"),
+  requirePermission("ranking:recompute"),
+  validate({ params: examIdParamSchema }),
+  recompute
+);
+
+rankingRouter.get(
+  "/:examId/class/:classId",
+  authMiddleware,
+  allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"),
+  requirePermission("ranking:read"),
+  validate({ params: classRankingParamSchema }),
+  getClass
+);
+
+rankingRouter.get(
+  "/:examId",
+  authMiddleware,
+  allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "STUDENT", "PARENT"),
+  requirePermission("ranking:read"),
+  validate({ params: examIdParamSchema, query: rankingQuerySchema }),
+  get
+);
+
+export default rankingRouter;

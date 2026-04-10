@@ -4,7 +4,7 @@ import multer from "multer";
 import { authMiddleware } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
-import { uploadBulkPhotos } from "./controller";
+import { uploadBulkPhotos } from "@/modules/bulkPhotoUpload/controller";
 
 const router = Router();
 

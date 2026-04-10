@@ -1,8 +1,8 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import type { CreateSubjectInput, UpdateSubjectInput } from "./validation";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import type { CreateSubjectInput, UpdateSubjectInput } from "@/modules/subject/validation";
 
 function mapPrismaError(error: unknown): never {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {

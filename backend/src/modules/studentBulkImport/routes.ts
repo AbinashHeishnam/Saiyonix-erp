@@ -4,7 +4,8 @@ import express from "express";
 import { authMiddleware } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
-import { getStudentTemplate, importStudents, previewStudents } from "./controller";
+import { validate } from "../../middleware/validate.middleware";
+import { getStudentTemplate, importStudents, previewStudents } from "@/modules/studentBulkImport/controller";
 
 const studentBulkImportRouter = Router();
 
@@ -24,8 +25,6 @@ studentBulkImportRouter.post(
     type: [
       "text/csv",
       "application/csv",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ],
     limit: "10mb",
   }),
@@ -40,8 +39,6 @@ studentBulkImportRouter.post(
     type: [
       "text/csv",
       "application/csv",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ],
     limit: "10mb",
   }),

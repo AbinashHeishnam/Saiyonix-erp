@@ -1,8 +1,15 @@
 import { Prisma } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import type { CreateClassInput, UpdateClassInput } from "./validation";
+import prisma from "@/core/db/prisma";
+import { trigger } from "@/modules/notification/service";
+import { collectClassRecipients } from "@/modules/notification/recipientUtils";
+import { ApiError } from "@/core/errors/apiError";
+import type {
+  AssignClassTeacherInput,
+  CreateClassInput,
+  RemoveClassTeacherInput,
+  UpdateClassInput,
+} from "@/modules/class/validation";
 
 async function ensureAcademicYearBelongsToSchool(schoolId: string, academicYearId: string) {
   const academicYear = await prisma.academicYear.findFirst({
@@ -16,6 +23,19 @@ async function ensureAcademicYearBelongsToSchool(schoolId: string, academicYearI
   if (!academicYear) {
     throw new ApiError(400, "Academic year not found for this school");
   }
+}
+
+async function getActiveAcademicYearId(schoolId: string) {
+  const academicYear = await prisma.academicYear.findFirst({
+    where: { schoolId, isActive: true },
+    select: { id: true },
+  });
+
+  if (!academicYear) {
+    throw new ApiError(400, "Active academic year not found");
+  }
+
+  return academicYear.id;
 }
 
 function mapPrismaError(error: unknown): never {
@@ -36,14 +56,84 @@ export async function createClass(schoolId: string, payload: CreateClassInput) {
   await ensureAcademicYearBelongsToSchool(schoolId, payload.academicYearId);
 
   try {
-    return await prisma.class.create({
-      data: {
-        schoolId,
-        academicYearId: payload.academicYearId,
-        className: payload.className,
-        classOrder: payload.classOrder,
-        isHalfDay: payload.isHalfDay ?? false,
-      },
+    return await prisma.$transaction(async (tx) => {
+      const existing = await tx.class.findFirst({
+        where: {
+          schoolId,
+          academicYearId: payload.academicYearId,
+          className: { equals: payload.className, mode: "insensitive" },
+        },
+        select: { id: true, deletedAt: true },
+      });
+
+      if (existing && !existing.deletedAt) {
+        throw new ApiError(409, "Class already exists for this academic year");
+      }
+
+      const totalSections = payload.totalSections;
+      const capacity = payload.capacity;
+      const sectionNames = Array.from({ length: totalSections }, (_, idx) =>
+        String.fromCharCode(65 + idx)
+      );
+
+      if (existing?.id) {
+        const classRecord = await tx.class.update({
+          where: { id: existing.id },
+          data: {
+            deletedAt: null,
+            className: payload.className,
+            classOrder: payload.classOrder,
+            isHalfDay: payload.isHalfDay ?? false,
+          },
+        });
+
+        await tx.section.updateMany({
+          where: {
+            classId: existing.id,
+            sectionName: { notIn: sectionNames },
+          },
+          data: { deletedAt: new Date() },
+        });
+
+        for (const sectionName of sectionNames) {
+          const existingSection = await tx.section.findFirst({
+            where: { classId: existing.id, sectionName },
+            select: { id: true },
+          });
+          if (existingSection) {
+            await tx.section.update({
+              where: { id: existingSection.id },
+              data: { deletedAt: null, capacity },
+            });
+          } else {
+            await tx.section.create({
+              data: { classId: existing.id, sectionName, capacity },
+            });
+          }
+        }
+
+        return classRecord;
+      }
+
+      const classRecord = await tx.class.create({
+        data: {
+          schoolId,
+          academicYearId: payload.academicYearId,
+          className: payload.className,
+          classOrder: payload.classOrder,
+          isHalfDay: payload.isHalfDay ?? false,
+        },
+      });
+
+      const sectionData = sectionNames.map((sectionName) => ({
+        classId: classRecord.id,
+        sectionName,
+        capacity,
+      }));
+
+      await tx.section.createMany({ data: sectionData });
+
+      return classRecord;
     });
   } catch (error) {
     mapPrismaError(error);
@@ -52,10 +142,14 @@ export async function createClass(schoolId: string, payload: CreateClassInput) {
 
 export async function listClasses(
   schoolId: string,
+  academicYearId?: string,
   pagination?: { skip: number; take: number }
 ) {
+  const resolvedAcademicYearId =
+    academicYearId ?? (await getActiveAcademicYearId(schoolId));
   const where = {
     schoolId,
+    academicYearId: resolvedAcademicYearId,
     deletedAt: null,
   };
 
@@ -142,9 +236,112 @@ export async function deleteClass(schoolId: string, id: string) {
     where: { id },
     data: {
       deletedAt: new Date(),
+      classTeacherId: null,
     },
     select: { id: true },
   });
 
+  await prisma.section.updateMany({
+    where: { classId: id, deletedAt: null },
+    data: { deletedAt: new Date() },
+  });
+
   return classRecord;
+}
+
+export async function assignClassTeacher(
+  schoolId: string,
+  payload: AssignClassTeacherInput
+) {
+  const { classId, teacherId } = payload;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const classRecord = await tx.class.findFirst({
+      where: { id: classId, schoolId, deletedAt: null },
+      select: { id: true, className: true, classTeacherId: true },
+    });
+
+    if (!classRecord) {
+      throw new ApiError(404, "Class not found");
+    }
+
+    if (classRecord.classTeacherId) {
+      throw new ApiError(400, "Class already has a class teacher");
+    }
+
+    const teacher = await tx.teacher.findFirst({
+      where: { id: teacherId, schoolId, deletedAt: null },
+      select: { id: true, fullName: true, userId: true },
+    });
+
+    if (!teacher) {
+      throw new ApiError(404, "Teacher not found");
+    }
+
+    const existingAssignment = await tx.class.findFirst({
+      where: { classTeacherId: teacherId, schoolId, deletedAt: null },
+      select: { id: true },
+    });
+
+    if (existingAssignment) {
+      throw new ApiError(400, "Teacher is already assigned as class teacher");
+    }
+
+    const updated = await tx.class.update({
+      where: { id: classId },
+      data: { classTeacherId: teacherId },
+    });
+
+    return { updated, classRecord, teacher };
+  });
+
+  try {
+    const recipients = new Set<string>();
+    const classRecipients = await collectClassRecipients({
+      schoolId,
+      classId: result.classRecord.id,
+    });
+    classRecipients.forEach((id) => recipients.add(id));
+    if (result.teacher.userId) recipients.add(result.teacher.userId);
+
+    if (recipients.size) {
+      await trigger("CLASS_TEACHER_ASSIGNED", {
+        schoolId,
+        classId: result.classRecord.id,
+        className: result.classRecord.className,
+        userIds: Array.from(recipients),
+        metadata: {
+          teacherId: result.teacher.id,
+          teacherName: result.teacher.fullName,
+        },
+      });
+    }
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[notify] class teacher assignment failed", error);
+    }
+  }
+
+  return result.updated;
+}
+
+export async function removeClassTeacher(
+  schoolId: string,
+  payload: RemoveClassTeacherInput
+) {
+  const { classId } = payload;
+
+  const classRecord = await prisma.class.findFirst({
+    where: { id: classId, schoolId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!classRecord) {
+    throw new ApiError(404, "Class not found");
+  }
+
+  return prisma.class.update({
+    where: { id: classId },
+    data: { classTeacherId: null },
+  });
 }

@@ -1,10 +1,13 @@
 import type { Prisma } from "@prisma/client";
 
-import prisma from "../../core/db/prisma";
-import { ApiError } from "../../core/errors/apiError";
-import type { CreateNoteInput, UpdateNoteInput } from "./validation";
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { bumpVersion } from "@/core/cache/cacheVersion";
+import { trigger as triggerNotification } from "@/modules/notification/service";
+import { resolveStudentEnrollmentForPortal } from "@/modules/student/enrollmentUtils";
+import type { CreateNoteInput, UpdateNoteInput } from "@/modules/notes/validation";
 
-type DbClient = Prisma.TransactionClient | typeof prisma;
+type DbClient = typeof prisma;
 
 type NoteFilters = {
   classSubjectId?: string;
@@ -176,6 +179,7 @@ async function ensureClassSubjectBelongsToSchool(
     select: {
       id: true,
       classId: true,
+      class: { select: { academicYearId: true } },
     },
   });
 
@@ -183,7 +187,11 @@ async function ensureClassSubjectBelongsToSchool(
     throw new ApiError(400, "Class subject mapping not found for this school");
   }
 
-  return classSubject;
+  return {
+    id: classSubject.id,
+    classId: classSubject.classId,
+    academicYearId: classSubject.class.academicYearId,
+  };
 }
 
 async function ensureSectionBelongsToSchool(
@@ -246,16 +254,17 @@ export async function createNote(
 ): Promise<NoteWithTeacher> {
   const teacherId = await resolveTeacherIdForActor(schoolId, actor);
 
-  return prisma.$transaction(async (tx) => {
+  const { note, classId, academicYearId } = await prisma.$transaction(async (tx) => {
+    const db = tx as unknown as DbClient;
     const classSubject = await ensureClassSubjectBelongsToSchool(
-      tx,
+      db,
       schoolId,
       payload.classSubjectId
     );
 
     if (payload.sectionId) {
       const section = await ensureSectionBelongsToSchool(
-        tx,
+        db,
         schoolId,
         payload.sectionId
       );
@@ -265,7 +274,7 @@ export async function createNote(
       }
     }
 
-    return tx.note.create({
+    const created = await tx.note.create({
       data: {
         teacherId,
         classSubjectId: payload.classSubjectId,
@@ -286,7 +295,50 @@ export async function createNote(
         },
       },
     });
+    return { note: created, classId: classSubject.classId, academicYearId: classSubject.academicYearId };
   });
+
+  const versionKey = `classroom:${schoolId}:${teacherId}:${classId}:${payload.sectionId ?? "all"}`;
+  await bumpVersion(versionKey);
+
+  try {
+    const enrollments = await prisma.studentEnrollment.findMany({
+      where: {
+        classId,
+        academicYearId,
+        ...(payload.sectionId ? { sectionId: payload.sectionId } : {}),
+        student: { schoolId, deletedAt: null },
+      },
+      select: { studentId: true },
+    });
+    const studentIds = enrollments.map((item) => item.studentId);
+    if (studentIds.length > 0) {
+      await triggerNotification("NOTE_PUBLISHED", {
+        schoolId,
+        studentIds,
+        title: "New Note Published",
+        body: payload.title,
+        entityType: "NOTE",
+        entityId: note.id,
+        linkUrl: "/classroom",
+        metadata: {
+          noteId: note.id,
+          classId,
+          sectionId: payload.sectionId ?? null,
+          routes: {
+            STUDENT: "/classroom",
+            PARENT: "/classroom",
+          },
+        },
+      });
+    }
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[notify] note publish failed", error);
+    }
+  }
+
+  return note;
 }
 
 export async function listNotes(
@@ -365,6 +417,13 @@ export async function listNotes(
         publishedAt: true,
         createdAt: true,
         updatedAt: true,
+        classSubject: {
+          select: {
+            id: true,
+            class: { select: { id: true, className: true } },
+            subject: { select: { id: true, name: true } },
+          },
+        },
         teacher: {
           select: {
             id: true,

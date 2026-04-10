@@ -1,1 +1,1 @@
-export { ApiError } from "../../utils/apiError";
+export { ApiError } from "@/utils/apiError";
