@@ -16,15 +16,12 @@ import {
 } from "../services/api/auth";
 
 type Mode = "activate" | "reset";
-type AuthMethod = "email" | "phone";
 
 export default function TeacherAccessPage({ mode }: { mode: Mode }) {
   const navigate = useNavigate();
   const isActivation = mode === "activate";
 
-  const [method, setMethod] = useState<AuthMethod>("email");
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -48,20 +45,14 @@ export default function TeacherAccessPage({ mode }: { mode: Mode }) {
     return () => window.clearInterval(timer);
   }, [resendCooldown]);
 
-  useEffect(() => {
-    if (isActivation && method !== "email") {
-      setMethod("email");
-    }
-  }, [isActivation, method]);
-
-  const getIdentifier = () => (isActivation || method === "email" ? email.trim() : phone.trim());
+  const getIdentifier = () => email.trim();
 
   const sendOtp = async () => {
     setError(null);
     setMessage(null);
     const identifier = getIdentifier();
     if (!identifier) {
-      setError(`Please enter your teacher ${method}.`);
+      setError("Please enter your teacher email.");
       return;
     }
     setLoading(true);
@@ -74,7 +65,7 @@ export default function TeacherAccessPage({ mode }: { mode: Mode }) {
       setStep("otp");
       setOtp("");
       setResendCooldown(60);
-      setMessage(`A secure passcode has been sent to your ${method}.`);
+      setMessage("A secure passcode has been sent to your email.");
     } catch (err: any) {
       setError(err?.response?.data?.message ?? "Failed to send OTP");
     } finally {
@@ -138,7 +129,7 @@ export default function TeacherAccessPage({ mode }: { mode: Mode }) {
   const title = isActivation ? "Teacher Activation" : "Reset Password";
   const subtitle = isActivation
     ? "Complete your verification to activate your teacher profile."
-    : "Recover access to your teaching workspace securely.";
+    : "Verify your teacher identity for password change.";
 
   return (
     <AuthShell
@@ -174,57 +165,15 @@ export default function TeacherAccessPage({ mode }: { mode: Mode }) {
 
           {step === "identify" && (
             <div className="flex flex-col gap-6 text-left">
-              {!isActivation && (
-                <div className="flex flex-col gap-2">
-                  <label className="text-[13px] font-semibold text-slate-500 dark:text-slate-400 ml-1">
-                    Choose Verification Method
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-2xl">
-                    <button
-                      type="button"
-                      onClick={() => setMethod("email")}
-                      className={`py-2 text-[14px] font-semibold rounded-xl transition-all duration-200 ${method === "email"
-                          ? "bg-white shadow-sm text-sky-600 dark:bg-slate-700 dark:text-white"
-                          : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
-                        }`}
-                    >
-                      Email Address
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMethod("phone")}
-                      className={`py-2 text-[14px] font-semibold rounded-xl transition-all duration-200 ${method === "phone"
-                          ? "bg-white shadow-sm text-sky-600 dark:bg-slate-700 dark:text-white"
-                          : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
-                        }`}
-                    >
-                      Phone Number
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {isActivation || method === "email" ? (
-                <Input
-                  label="Teacher Email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@school.edu"
-                  type="email"
-                  className="py-3"
-                  autoFocus
-                />
-              ) : (
-                <Input
-                  label="Teacher Phone"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="Enter registered mobile number"
-                  type="tel"
-                  className="py-3"
-                  autoFocus
-                />
-              )}
+              <Input
+                label="Teacher Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@school.edu"
+                type="email"
+                className="py-3"
+                autoFocus
+              />
 
               <div className="pt-2">
                 <Button onClick={sendOtp} loading={loading} fullWidth className="py-3 text-[15px] shadow-sm">
