@@ -167,29 +167,9 @@ export default function PaymentPage() {
               razorpaySignature: response.razorpay_signature,
             });
 
-            const data = (await payFee({
-              studentId: selectedStudentId ?? undefined,
-              amount: paymentAmount,
-              payment: {
-                orderId: response.razorpay_order_id,
-                paymentId: response.razorpay_payment_id,
-                signature: response.razorpay_signature,
-              },
-            })) as PaymentReceipt;
-
             queryClient.invalidateQueries({ queryKey: ["fee-status", selectedStudentId] });
             toastUtils.success("Payment completed");
-            if (data?.payment?.id) {
-              sessionStorage.setItem(
-                `receipt:${data.payment.id}`,
-                JSON.stringify({
-                  payment: data.payment,
-                  fee: data.fee,
-                  student: selectedStudent,
-                })
-              );
-              navigate(`/fees/receipt/${data.payment.id}`, { state: { receipt: data } });
-            }
+            navigate("/fees");
           } catch (err: any) {
             toastUtils.error(err?.message ?? "Payment verification failed");
           } finally {
