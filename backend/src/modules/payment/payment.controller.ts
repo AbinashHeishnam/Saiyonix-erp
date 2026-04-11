@@ -7,9 +7,11 @@ import { success } from "@/utils/apiResponse";
 import { buildPaginationMeta, parsePagination } from "@/utils/pagination";
 import { getRazorpayConfig } from "@/core/config/externalServices";
 import {
+  applyGatewayPaymentUpdate,
   createPaymentOrder,
   createPaymentLog,
   createManualPayment,
+  findPaymentByGatewayOrderId,
   generateAdminReceiptPdf,
   listPayments,
   listPaymentLogs,
@@ -76,19 +78,6 @@ async function resolveStudentId(
   return studentIdParam;
 }
 
-async function getActiveAcademicYearId(schoolId: string) {
-  const academicYear = await prisma.academicYear.findFirst({
-    where: { schoolId, isActive: true },
-    select: { id: true },
-  });
-
-  if (!academicYear) {
-    throw new ApiError(404, "Active academic year not found");
-  }
-
-  return academicYear.id;
-}
-
 export async function createOrder(
   req: AuthRequest,
   res: Response,
@@ -145,37 +134,6 @@ export async function verify(
   try {
     const schoolId = getSchoolId(req);
     const actor = getActor(req);
-    const resolvedStudentId = await resolveStudentId(
-      schoolId,
-      actor,
-      req.body?.studentId ?? null
-    );
-
-    if (!resolvedStudentId) {
-      throw new ApiError(400, "studentId is required");
-    }
-
-    const academicYearId =
-      req.body?.academicYearId ?? (await getActiveAcademicYearId(schoolId));
-
-    const student = await prisma.student.findFirst({
-      where: { id: resolvedStudentId, schoolId, deletedAt: null },
-      select: { fullName: true, registrationNumber: true },
-    });
-    if (!student) {
-      throw new ApiError(404, "Student not found");
-    }
-
-    const enrollment = await prisma.studentEnrollment.findFirst({
-      where: { studentId: resolvedStudentId, academicYearId },
-      select: { rollNumber: true },
-    });
-
-    const rollNumber =
-      enrollment?.rollNumber !== null && enrollment?.rollNumber !== undefined
-        ? String(enrollment.rollNumber)
-        : student.registrationNumber ?? "—";
-
     let isValid = false;
     let errorMessage: string | null = null;
 
@@ -188,22 +146,68 @@ export async function verify(
       errorMessage = error instanceof Error ? error.message : "Payment verification failed";
     }
 
-    await createPaymentLog({
-      studentId: resolvedStudentId,
-      studentName: student.fullName,
-      rollNumber,
-      amount: req.body.amount,
-      transactionId: req.body.razorpayPaymentId ?? null,
-      status: isValid ? "SUCCESS" : "FAILED",
-      method: "RAZORPAY",
-      errorMessage: isValid ? null : errorMessage ?? "Payment verification failed",
-    });
-
     if (!isValid) {
+      const payment = await findPaymentByGatewayOrderId(req.body.razorpayOrderId);
+      if (payment) {
+        await createPaymentLog({
+          paymentId: payment.id,
+          studentId: payment.student.id,
+          studentName: payment.student.fullName ?? "Student",
+          rollNumber: payment.student.registrationNumber ?? "—",
+          amount: Number(payment.amount),
+          transactionId: req.body.razorpayPaymentId ?? null,
+          status: "FAILED",
+          method: "RAZORPAY",
+          source: "VERIFY",
+          errorMessage: errorMessage ?? "Payment verification failed",
+          rawPayload: req.body,
+        });
+      }
       throw new ApiError(400, errorMessage ?? "Invalid payment signature");
     }
 
-    return success(res, { verified: true }, "Payment verified");
+    const payment = await findPaymentByGatewayOrderId(req.body.razorpayOrderId);
+    if (!payment || payment.student.schoolId !== schoolId) {
+      throw new ApiError(404, "Payment order not found");
+    }
+
+    if (actor.roleType === "STUDENT") {
+      if (!payment.student.userId || payment.student.userId !== actor.userId) {
+        throw new ApiError(403, "Student account not linked");
+      }
+    }
+
+    if (actor.roleType === "PARENT") {
+      const link = await prisma.parentStudentLink.findFirst({
+        where: {
+          studentId: payment.student.id,
+          parent: { is: { userId: actor.userId, schoolId } },
+          student: { schoolId, deletedAt: null },
+        },
+        select: { studentId: true },
+      });
+      if (!link) {
+        throw new ApiError(403, "Parent is not linked to this student");
+      }
+    }
+
+    const result = await applyGatewayPaymentUpdate({
+      gatewayOrderId: req.body.razorpayOrderId,
+      gatewayPaymentId: req.body.razorpayPaymentId,
+      status: "PAID",
+      source: "VERIFY",
+      rawPayload: req.body,
+    });
+
+    if (result.action === "NOT_FOUND") {
+      throw new ApiError(404, "Payment order not found");
+    }
+
+    return success(
+      res,
+      { verified: true, paymentStatus: result.payment.status },
+      "Payment verified"
+    );
   } catch (error) {
     return next(error);
   }

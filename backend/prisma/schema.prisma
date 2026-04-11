@@ -1489,14 +1489,15 @@ model Payment {
   id               String            @id @default(uuid())
   studentId        String
   feeTermId        String?
-  gatewayOrderId   String?
-  gatewayPaymentId String?
+  gatewayOrderId   String            @unique
+  gatewayPaymentId String?           @unique
   gatewaySignature String?
   idempotencyKey   String?           @unique
   amount           Decimal           @db.Decimal(10, 2)
   method           PaymentMethod
   status           PaymentStatus     @default(PENDING)
   paidAt           DateTime?
+  metadata         Json?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   feeTerm          FeeTerm?          @relation(fields: [feeTermId], references: [id])
@@ -1555,9 +1556,11 @@ model PaymentLog {
   rollNumber    String
   amount        Decimal       @db.Decimal(10, 2)
   transactionId String?
+  gatewayEventId String?      @unique
   status        String
   method        String
   errorMessage  String?
+  rawPayload    Json?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   paymentId     String?
@@ -2163,6 +2166,8 @@ enum PaymentMethod {
 enum PaymentSource {
   SYSTEM
   ADMIN_MANUAL
+  VERIFY
+  WEBHOOK
 }
 
 enum AdmitCardStatus {

@@ -7,6 +7,7 @@ export const createOrderSchema = z
     receipt: z.string().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
     studentId: z.string().uuid().optional(),
+    feeTermId: z.string().uuid().optional(),
     academicYearId: z.string().uuid().optional(),
     academicYear: z.string().min(1).optional(),
     classId: z.string().uuid().optional(),
@@ -19,9 +20,6 @@ export const verifyPaymentSchema = z.object({
   razorpayOrderId: z.string().min(1),
   razorpayPaymentId: z.string().min(1),
   razorpaySignature: z.string().min(1),
-  studentId: z.string().uuid(),
-  amount: z.number().positive(),
-  academicYearId: z.string().uuid().optional(),
   errorMessage: z.string().min(1).optional(),
 });
 

@@ -65,6 +65,7 @@ const envSchema = z.object({
     .refine((val) => Number.isFinite(val) && val > 0, "EMAIL_OTP_MAX_ATTEMPTS must be a number"),
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
   STORAGE_PROVIDER: z.string().optional(),
   STORAGE_BUCKET: z.string().optional(),
   STORAGE_REGION: z.string().optional(),

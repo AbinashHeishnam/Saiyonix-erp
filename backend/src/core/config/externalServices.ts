@@ -13,6 +13,7 @@ export type SmsConfig = {
 export type RazorpayConfig = {
   keyId?: string;
   keySecret?: string;
+  webhookSecret?: string;
   enabled: boolean;
 };
 
@@ -30,6 +31,7 @@ export type StorageConfig = {
 const CONFIG_KEYS = [
   "RAZORPAY_KEY_ID",
   "RAZORPAY_KEY_SECRET",
+  "RAZORPAY_WEBHOOK_SECRET",
   "SMS_API_KEY",
   "SMS_SENDER_ID",
   "OTP_PROVIDER",
@@ -60,9 +62,11 @@ export async function getRazorpayConfig(): Promise<RazorpayConfig> {
   const config = await getConfigs([...CONFIG_KEYS]);
   const keyId = config.RAZORPAY_KEY_ID?.trim() || undefined;
   const keySecret = config.RAZORPAY_KEY_SECRET?.trim() || undefined;
+  const webhookSecret = config.RAZORPAY_WEBHOOK_SECRET?.trim() || undefined;
   return {
     keyId,
     keySecret,
+    webhookSecret,
     enabled: Boolean(keyId && keySecret),
   };
 }

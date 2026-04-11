@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { v4 as uuidv4 } from "uuid";
 import PDFDocument from "pdfkit";
 
 import { PaymentService } from "@/core/services/payment.service";
@@ -13,6 +14,103 @@ import { cacheInvalidateByPrefix } from "@/core/cacheService";
 import { trigger } from "@/modules/notification/service";
 
 type PdfDocument = InstanceType<typeof PDFDocument>;
+
+type GatewayUpdateResult =
+  | { action: "NOT_FOUND"; payment: null }
+  | { action: "ALREADY_PAID"; payment: { id: string; status: string } }
+  | { action: "UPDATED"; payment: { id: string; status: string } };
+
+async function resolveRollNumber(
+  tx: typeof prisma,
+  payment: {
+    student: { id: string; fullName: string | null; registrationNumber: string | null };
+    feeTerm: { academicYearId: string } | null;
+  }
+) {
+  const academicYearId = payment.feeTerm?.academicYearId ?? null;
+  if (!academicYearId) {
+    return payment.student.registrationNumber ?? "—";
+  }
+  const enrollment = await tx.studentEnrollment.findFirst({
+    where: { studentId: payment.student.id, academicYearId },
+    select: { rollNumber: true },
+  });
+  return enrollment?.rollNumber?.toString() ?? payment.student.registrationNumber ?? "—";
+}
+
+export async function findPaymentByGatewayOrderId(gatewayOrderId: string) {
+  return prisma.payment.findFirst({
+    where: { gatewayOrderId },
+    include: {
+      student: { select: { id: true, fullName: true, registrationNumber: true, schoolId: true, userId: true } },
+      feeTerm: { select: { id: true, academicYearId: true } },
+    },
+  });
+}
+
+export async function applyGatewayPaymentUpdate(params: {
+  gatewayOrderId: string;
+  gatewayPaymentId?: string | null;
+  status: "PAID" | "FAILED";
+  source: "VERIFY" | "WEBHOOK";
+  errorMessage?: string | null;
+  rawPayload?: unknown | null;
+  gatewayEventId?: string | null;
+}): Promise<GatewayUpdateResult> {
+  return prisma.$transaction(async (tx) => {
+    const payment = await tx.payment.findFirst({
+      where: { gatewayOrderId: params.gatewayOrderId },
+      include: {
+        student: { select: { id: true, fullName: true, registrationNumber: true } },
+        feeTerm: { select: { academicYearId: true } },
+      },
+    });
+
+    if (!payment) {
+      return { action: "NOT_FOUND", payment: null };
+    }
+
+    if (payment.status === "PAID") {
+      return { action: "ALREADY_PAID", payment: { id: payment.id, status: payment.status } };
+    }
+
+    if (payment.gatewayPaymentId && params.gatewayPaymentId && payment.gatewayPaymentId !== params.gatewayPaymentId) {
+      throw new ApiError(409, "Payment already processed with a different transaction");
+    }
+
+    const nextStatus = params.status;
+    const updated = await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: nextStatus,
+        gatewayPaymentId: params.gatewayPaymentId ?? payment.gatewayPaymentId ?? null,
+        paidAt: nextStatus === "PAID" ? new Date() : payment.paidAt,
+      },
+      select: { id: true, status: true },
+    });
+
+    const rollNumber = await resolveRollNumber(tx, payment);
+
+    await tx.paymentLog.create({
+      data: {
+        paymentId: payment.id,
+        studentId: payment.student.id,
+        studentName: payment.student.fullName ?? "Student",
+        rollNumber,
+        amount: payment.amount,
+        transactionId: params.gatewayPaymentId ?? params.gatewayOrderId,
+        gatewayEventId: params.gatewayEventId ?? null,
+        status: nextStatus === "PAID" ? "SUCCESS" : "FAILED",
+        method: "RAZORPAY",
+        source: params.source,
+        errorMessage: params.errorMessage ?? null,
+        rawPayload: params.rawPayload ?? null,
+      },
+    });
+
+    return { action: "UPDATED", payment: updated };
+  });
+}
 
 export async function createPaymentOrder(input: CreateOrderInput, schoolId: string) {
   let amount = input.amount;
@@ -48,17 +146,61 @@ export async function createPaymentOrder(input: CreateOrderInput, schoolId: stri
     }
   }
 
+  if (!input.studentId) {
+    throw new ApiError(400, "studentId is required");
+  }
+
   if (!amount || amount <= 0) {
     throw new ApiError(400, "Invalid amount");
   }
 
   const amountInPaise = Math.round(amount * 100);
-  return PaymentService.createPaymentOrder({
-    amount: amountInPaise,
-    currency: input.currency ?? "INR",
-    receipt: input.receipt,
-    metadata: input.metadata as Record<string, string | number | null> | undefined,
+  const provisionalOrderId = `pending_${uuidv4()}`;
+
+  const payment = await prisma.payment.create({
+    data: {
+      studentId: input.studentId,
+      feeTermId: input.feeTermId ?? null,
+      amount: new Prisma.Decimal(amount),
+      method: "ONLINE",
+      status: "PENDING",
+      gatewayOrderId: provisionalOrderId,
+      metadata: {
+        ...(input.metadata ?? {}),
+        schoolId,
+        feeTermId: input.feeTermId ?? null,
+      },
+    },
+    select: { id: true, gatewayOrderId: true },
   });
+
+  try {
+    const order = await PaymentService.createPaymentOrder({
+      amount: amountInPaise,
+      currency: input.currency ?? "INR",
+      receipt: input.receipt ?? payment.id,
+      metadata: input.metadata as Record<string, string | number | null> | undefined,
+    });
+
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { gatewayOrderId: order.id },
+    });
+
+    return {
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      receipt: order.receipt,
+      paymentId: payment.id,
+    };
+  } catch (error) {
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: "FAILED" },
+    });
+    throw error;
+  }
 }
 
 export async function verifyPaymentSignature(input: VerifyPaymentInput) {
@@ -78,8 +220,10 @@ export async function createPaymentLog(input: {
   transactionId?: string | null;
   status: "SUCCESS" | "FAILED";
   method: string;
-  source?: "SYSTEM" | "ADMIN_MANUAL";
+  source?: "SYSTEM" | "ADMIN_MANUAL" | "VERIFY" | "WEBHOOK";
   errorMessage?: string | null;
+  gatewayEventId?: string | null;
+  rawPayload?: unknown | null;
 }) {
   return prisma.paymentLog.create({
     data: {
@@ -89,10 +233,12 @@ export async function createPaymentLog(input: {
       rollNumber: input.rollNumber,
       amount: input.amount,
       transactionId: input.transactionId ?? null,
+      gatewayEventId: input.gatewayEventId ?? null,
       status: input.status,
       method: input.method,
       source: input.source ?? "SYSTEM",
       errorMessage: input.errorMessage ?? null,
+      rawPayload: input.rawPayload ?? null,
     },
   });
 }
@@ -453,6 +599,7 @@ export async function createManualPayment(
   });
 
   const result = await prisma.$transaction(async (tx) => {
+    const manualOrderId = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const payment = await tx.payment.create({
       data: {
         studentId: input.studentId,
@@ -462,7 +609,7 @@ export async function createManualPayment(
         status: "PAID",
         paidAt: new Date(),
         gatewayPaymentId: input.transactionId ?? null,
-        gatewayOrderId: input.transactionId ? `manual_${Date.now()}` : null,
+        gatewayOrderId: input.transactionId ? `manual_${Date.now()}` : manualOrderId,
         items: {
           create: [
             {
