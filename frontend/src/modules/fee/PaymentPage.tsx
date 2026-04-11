@@ -146,7 +146,7 @@ export default function PaymentPage() {
         key: razorpayKey,
         amount: order.amount,
         currency: order.currency ?? "INR",
-        order_id: order.id,
+        order_id: order.orderId,
         name: branding.schoolName || "School Fees",
         description: "Fee payment",
         handler: async (response: {
@@ -155,6 +155,12 @@ export default function PaymentPage() {
           razorpay_signature: string;
         }) => {
           try {
+            console.log("RAZORPAY RESPONSE FULL:", response);
+            console.log("VERIFY PAYLOAD:", {
+              razorpayOrderId: response.razorpay_order_id,
+              razorpayPaymentId: response.razorpay_payment_id,
+              razorpaySignature: response.razorpay_signature,
+            });
             await verifyPayment({
               razorpayOrderId: response.razorpay_order_id,
               razorpayPaymentId: response.razorpay_payment_id,
@@ -208,7 +214,7 @@ export default function PaymentPage() {
         const errorDescription = resp?.error?.description ?? "Payment failed";
         toastUtils.error(errorDescription);
         try {
-          const orderId = resp?.error?.metadata?.order_id ?? order.id;
+          const orderId = resp?.error?.metadata?.order_id ?? order.orderId;
           const paymentId = resp?.error?.metadata?.payment_id ?? "failed";
           await verifyPayment({
             razorpayOrderId: orderId,
