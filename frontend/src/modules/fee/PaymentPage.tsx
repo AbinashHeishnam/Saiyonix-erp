@@ -10,7 +10,7 @@ import LoadingState from "../../components/LoadingState";
 import StatusBadge from "../../components/StatusBadge";
 import { useActiveStudent } from "../../hooks/useActiveStudent";
 import { useSchoolBranding } from "../../hooks/useSchoolBranding";
-import { getStudentFeeStatus, payFee } from "../../services/api/fee";
+import { getStudentFeeStatus } from "../../services/api/fee";
 import { createPaymentOrder, getRazorpayKey, verifyPayment } from "../../services/api/payments";
 import { toastUtils } from "../../utils/toast";
 
@@ -30,21 +30,6 @@ function formatDate(value: string | null | undefined) {
   if (Number.isNaN(parsed.getTime())) return "—";
   return parsed.toLocaleDateString("en-IN");
 }
-
-type PaymentReceipt = {
-  payment: {
-    id: string;
-    amount: number;
-    status: string;
-    transactionId: string;
-    createdAt: string;
-  };
-  fee: {
-    totalAmount: number;
-    paidAmount: number;
-    status: string;
-  };
-};
 
 export default function PaymentPage() {
   const { branding } = useSchoolBranding();
@@ -75,11 +60,6 @@ export default function PaymentPage() {
     queryKey: ["razorpay-key"],
     queryFn: getRazorpayKey,
   });
-
-  const selectedStudent = useMemo(() => {
-    if (!selectedStudentId) return activeStudent ?? null;
-    return parentStudents.find((student) => student.id === selectedStudentId) ?? activeStudent ?? null;
-  }, [activeStudent, parentStudents, selectedStudentId]);
 
   const status = feeQuery.data?.status ?? "NOT_PUBLISHED";
   const baseAmount = feeQuery.data?.baseAmount ?? null;
