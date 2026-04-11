@@ -18,9 +18,6 @@ export async function verifyPayment(payload: {
   razorpayOrderId: string;
   razorpayPaymentId: string;
   razorpaySignature: string;
-  studentId: string;
-  amount: number;
-  academicYearId?: string;
   errorMessage?: string;
 }) {
   const res = await api.post("/payments/verify", payload);

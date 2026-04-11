@@ -159,8 +159,6 @@ export default function PaymentPage() {
               razorpayOrderId: response.razorpay_order_id,
               razorpayPaymentId: response.razorpay_payment_id,
               razorpaySignature: response.razorpay_signature,
-              studentId: selectedStudentId,
-              amount: paymentAmount,
             });
 
             const data = (await payFee({
@@ -216,8 +214,6 @@ export default function PaymentPage() {
             razorpayOrderId: orderId,
             razorpayPaymentId: paymentId,
             razorpaySignature: "failed",
-            studentId: selectedStudentId,
-            amount: paymentAmount,
             errorMessage: errorDescription,
           });
         } catch {
