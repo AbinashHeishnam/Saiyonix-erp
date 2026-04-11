@@ -102,7 +102,7 @@ export default function AdminPaymentLogsPage() {
               <thead className="text-left text-xs uppercase tracking-widest text-slate-400">
                 <tr>
                   <th className="py-2 pr-4">Name</th>
-                  <th className="py-2 pr-4">Roll</th>
+                  <th className="py-2 pr-4">Registration No</th>
                   <th className="py-2 pr-4">Amount</th>
                   <th className="py-2 pr-4">Status</th>
                   <th className="py-2 pr-4">Time</th>

@@ -39,6 +39,52 @@ async function resolveRollNumber(
   return enrollment?.rollNumber?.toString() ?? payment.student.registrationNumber ?? "—";
 }
 
+type FeeSyncResolution =
+  | { ok: true; academicYearId: string; classId: string }
+  | { ok: false; reason: string; metadata?: Record<string, unknown> };
+
+async function resolveFeeSyncContext(
+  tx: typeof prisma,
+  payment: {
+    feeTerm: { academicYearId: string } | null;
+    student: { id: string; schoolId: string | null };
+    metadata: unknown;
+  }
+): Promise<FeeSyncResolution> {
+  const metadata = (payment.metadata ?? {}) as Record<string, unknown>;
+  const metaAcademicYearId =
+    typeof metadata.academicYearId === "string" ? metadata.academicYearId : null;
+  const metaClassId = typeof metadata.classId === "string" ? metadata.classId : null;
+
+  let academicYearId = payment.feeTerm?.academicYearId ?? metaAcademicYearId ?? null;
+  if (!academicYearId && payment.student.schoolId) {
+    const activeYear = await tx.academicYear.findFirst({
+      where: { schoolId: payment.student.schoolId, isActive: true },
+      select: { id: true },
+    });
+    academicYearId = activeYear?.id ?? null;
+  }
+
+  if (!academicYearId) {
+    return { ok: false, reason: "academic_year_not_resolved" };
+  }
+
+  let classId = metaClassId ?? null;
+  if (!classId) {
+    const enrollment = await tx.studentEnrollment.findFirst({
+      where: { studentId: payment.student.id, academicYearId },
+      select: { classId: true },
+    });
+    classId = enrollment?.classId ?? null;
+  }
+
+  if (!classId) {
+    return { ok: false, reason: "class_not_resolved", metadata: { academicYearId } };
+  }
+
+  return { ok: true, academicYearId, classId };
+}
+
 export async function findPaymentByGatewayOrderId(gatewayOrderId: string) {
   const payments = await prisma.payment.findMany({
     where: { gatewayOrderId },
@@ -66,7 +112,7 @@ export async function applyGatewayPaymentUpdate(params: {
     const payment = await tx.payment.findFirst({
       where: { gatewayOrderId: params.gatewayOrderId },
       include: {
-        student: { select: { id: true, fullName: true, registrationNumber: true } },
+        student: { select: { id: true, fullName: true, registrationNumber: true, schoolId: true } },
         feeTerm: { select: { id: true, academicYearId: true } },
       },
     });
@@ -114,18 +160,22 @@ export async function applyGatewayPaymentUpdate(params: {
     });
 
     let feeUpdated = false;
-    if (nextStatus === "PAID" && payment.feeTerm?.academicYearId) {
-      const enrollment = await tx.studentEnrollment.findFirst({
-        where: { studentId: payment.student.id, academicYearId: payment.feeTerm.academicYearId },
-        select: { classId: true },
-      });
-
-      if (enrollment?.classId) {
+    if (nextStatus === "PAID") {
+      const resolution = await resolveFeeSyncContext(tx, payment);
+      if (!resolution.ok) {
+        await tx.paymentAuditLog.create({
+          data: {
+            paymentId: payment.id,
+            action: "FEE_SYNC_SKIPPED",
+            metadata: { reason: resolution.reason, ...(resolution.metadata ?? {}) },
+          },
+        });
+      } else {
         const feeRecord = await tx.feeRecord.findFirst({
           where: {
             studentId: payment.student.id,
-            academicYearId: payment.feeTerm.academicYearId,
-            classId: enrollment.classId,
+            academicYearId: resolution.academicYearId,
+            classId: resolution.classId,
             isActive: true,
           },
         });
@@ -172,18 +222,10 @@ export async function applyGatewayPaymentUpdate(params: {
             data: {
               paymentId: payment.id,
               action: "FEE_SYNC_SKIPPED",
-              metadata: { reason: "feeRecord_not_found" },
+              metadata: { reason: "feeRecord_not_found", academicYearId: resolution.academicYearId },
             },
           });
         }
-      } else {
-        await tx.paymentAuditLog.create({
-          data: {
-            paymentId: payment.id,
-            action: "FEE_SYNC_SKIPPED",
-            metadata: { reason: "enrollment_not_found" },
-          },
-        });
       }
     }
 
@@ -257,6 +299,8 @@ export async function createPaymentOrder(input: CreateOrderInput, schoolId: stri
         ...(input.metadata ?? {}),
         schoolId,
         feeTermId: input.feeTermId ?? null,
+        academicYearId: input.academicYearId ?? null,
+        classId: input.classId ?? null,
       },
     },
     select: { id: true, gatewayOrderId: true },
