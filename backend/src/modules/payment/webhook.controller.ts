@@ -5,6 +5,7 @@ import { getRazorpayConfig } from "@/core/config/externalServices";
 import { ApiError } from "@/core/errors/apiError";
 import prisma from "@/core/db/prisma";
 import { applyGatewayPaymentUpdate } from "@/modules/payment/payment.service";
+import { logger } from "@/utils/logger";
 
 function getRawBody(req: Request) {
   const raw = (req as Request & { rawBody?: Buffer }).rawBody;
@@ -90,8 +91,12 @@ export async function razorpayWebhook(
           rawPayload: payload,
         });
       }
-    } catch {
-      return res.status(200).json({ received: true, conflict: true });
+    } catch (error: any) {
+      if (error?.code === "P2002" && eventId) {
+        return res.status(200).json({ received: true, duplicate: true });
+      }
+      logger.error("[payments:webhook] processing failed", { event, orderId, paymentId, error });
+      throw error;
     }
 
     return res.status(200).json({ received: true });

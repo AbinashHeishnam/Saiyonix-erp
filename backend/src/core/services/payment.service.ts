@@ -85,4 +85,21 @@ export const PaymentService = {
 
     return expected === input.razorpaySignature;
   },
+
+  async fetchRazorpayOrderStatus(orderId: string) {
+    await ensureRazorpayEnabled();
+    const client = await getRazorpayClient();
+    if (!client) {
+      throw new ApiError(400, "Razorpay integration is not configured");
+    }
+    const order = await client.orders.fetch(orderId);
+    return order as unknown as {
+      id: string;
+      status?: string;
+      amount?: number;
+      amount_paid?: number;
+      amount_due?: number;
+      receipt?: string;
+    };
+  },
 };

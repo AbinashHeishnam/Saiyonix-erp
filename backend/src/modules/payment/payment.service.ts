@@ -7,6 +7,7 @@ import prisma from "@/core/db/prisma";
 import { ApiError } from "@/core/errors/apiError";
 import { documentHeaderBuilder } from "@/utils/documentHeader";
 import { getSchoolBranding } from "@/utils/schoolBranding";
+import { cacheInvalidateByPrefix } from "@/core/cacheService";
 
 import type { CreateOrderInput, VerifyPaymentInput, ManualPaymentInput } from "@/modules/payment/validation";
 import { getStudentFeeStatus } from "@/modules/fee/fee.service";
@@ -18,7 +19,7 @@ type PdfDocument = InstanceType<typeof PDFDocument>;
 type GatewayUpdateResult =
   | { action: "NOT_FOUND"; payment: null }
   | { action: "ALREADY_PAID"; payment: { id: string; status: string } }
-  | { action: "UPDATED"; payment: { id: string; status: string } };
+  | { action: "UPDATED"; payment: { id: string; status: string }; feeUpdated: boolean; studentId: string };
 
 async function resolveRollNumber(
   tx: typeof prisma,
@@ -39,13 +40,17 @@ async function resolveRollNumber(
 }
 
 export async function findPaymentByGatewayOrderId(gatewayOrderId: string) {
-  return prisma.payment.findFirst({
+  const payments = await prisma.payment.findMany({
     where: { gatewayOrderId },
     include: {
       student: { select: { id: true, fullName: true, registrationNumber: true, schoolId: true, userId: true } },
       feeTerm: { select: { id: true, academicYearId: true } },
     },
   });
+  if (payments.length > 1) {
+    throw new ApiError(500, "Duplicate gatewayOrderId detected");
+  }
+  return payments[0] ?? null;
 }
 
 export async function applyGatewayPaymentUpdate(params: {
@@ -57,12 +62,12 @@ export async function applyGatewayPaymentUpdate(params: {
   rawPayload?: unknown | null;
   gatewayEventId?: string | null;
 }): Promise<GatewayUpdateResult> {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findFirst({
       where: { gatewayOrderId: params.gatewayOrderId },
       include: {
         student: { select: { id: true, fullName: true, registrationNumber: true } },
-        feeTerm: { select: { academicYearId: true } },
+        feeTerm: { select: { id: true, academicYearId: true } },
       },
     });
 
@@ -108,8 +113,89 @@ export async function applyGatewayPaymentUpdate(params: {
       },
     });
 
-    return { action: "UPDATED", payment: updated };
+    let feeUpdated = false;
+    if (nextStatus === "PAID" && payment.feeTerm?.academicYearId) {
+      const enrollment = await tx.studentEnrollment.findFirst({
+        where: { studentId: payment.student.id, academicYearId: payment.feeTerm.academicYearId },
+        select: { classId: true },
+      });
+
+      if (enrollment?.classId) {
+        const feeRecord = await tx.feeRecord.findFirst({
+          where: {
+            studentId: payment.student.id,
+            academicYearId: payment.feeTerm.academicYearId,
+            classId: enrollment.classId,
+            isActive: true,
+          },
+        });
+
+        if (feeRecord) {
+          const totalAmount = new Prisma.Decimal(feeRecord.totalAmount);
+          const paidAmount = new Prisma.Decimal(feeRecord.paidAmount);
+          const paymentAmount = new Prisma.Decimal(payment.amount);
+          const newPaid = paidAmount.plus(paymentAmount);
+
+          await tx.feeRecord.update({
+            where: { id: feeRecord.id },
+            data: {
+              paidAmount: newPaid,
+              status: newPaid.gte(totalAmount)
+                ? "PAID"
+                : newPaid.gt(0)
+                  ? "PARTIAL"
+                  : "PENDING",
+            },
+          });
+
+          await tx.feeTransaction.create({
+            data: {
+              feeRecordId: feeRecord.id,
+              paymentId: payment.id,
+              amount: paymentAmount,
+              type: "PAYMENT",
+            },
+          });
+
+          await tx.receipt.upsert({
+            where: { paymentId: payment.id },
+            update: {},
+            create: {
+              paymentId: payment.id,
+              receiptNumber: `RCT-${Date.now()}-${payment.id.slice(0, 6)}`,
+            },
+          });
+
+          feeUpdated = true;
+        } else {
+          await tx.paymentAuditLog.create({
+            data: {
+              paymentId: payment.id,
+              action: "FEE_SYNC_SKIPPED",
+              metadata: { reason: "feeRecord_not_found" },
+            },
+          });
+        }
+      } else {
+        await tx.paymentAuditLog.create({
+          data: {
+            paymentId: payment.id,
+            action: "FEE_SYNC_SKIPPED",
+            metadata: { reason: "enrollment_not_found" },
+          },
+        });
+      }
+    }
+
+    return { action: "UPDATED", payment: updated, feeUpdated, studentId: payment.student.id };
   });
+
+  if (result.action === "UPDATED" && result.feeUpdated) {
+    await cacheInvalidateByPrefix(`fee:${result.studentId}`);
+    await cacheInvalidateByPrefix(`admitEligibility:${result.studentId}:`);
+  }
+
+  return result;
 }
 
 export async function createPaymentOrder(input: CreateOrderInput, schoolId: string) {
@@ -155,6 +241,8 @@ export async function createPaymentOrder(input: CreateOrderInput, schoolId: stri
   }
 
   const amountInPaise = Math.round(amount * 100);
+  // NOTE: provisional ID used only to satisfy NOT NULL constraint before gateway order is created.
+  // Reconciliation helpers skip provisional IDs.
   const provisionalOrderId = `pending_${uuidv4()}`;
 
   const payment = await prisma.payment.create({
@@ -342,6 +430,29 @@ export async function listPayments(
   ]);
 
   return { items, total };
+}
+
+export async function listPendingPaymentsForReconciliation(params: {
+  schoolId: string;
+  take?: number;
+}) {
+  const take = params.take ?? 50;
+  const pending = await prisma.payment.findMany({
+    where: {
+      status: "PENDING",
+      student: { schoolId: params.schoolId, deletedAt: null },
+      NOT: { gatewayOrderId: { startsWith: "pending_" } },
+    },
+    orderBy: { createdAt: "asc" },
+    take,
+    select: { id: true, gatewayOrderId: true, createdAt: true },
+  });
+  return pending;
+}
+
+export async function reconcilePendingPayment(orderId: string) {
+  const status = await PaymentService.fetchRazorpayOrderStatus(orderId);
+  return status;
 }
 
 function buildPdfBuffer(build: (doc: PdfDocument) => void | Promise<void>): Promise<Buffer> {

@@ -137,7 +137,7 @@ router.use("/admit-card", admitCardStudentRouter);
 router.use("/admin/admit-card", admitCardAdminRouter);
 router.use("/", examWorkflowRouter);
 router.use("/payments", paymentRouter);
-router.post("/payment/webhook", razorpayWebhook);
+router.post("/payments/webhook", razorpayWebhook);
 router.use("/fee", feeRouter);
 router.use("/fees", feeRouter);
 router.use("/parent", parentRouter);
