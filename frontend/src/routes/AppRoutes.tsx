@@ -1,5 +1,5 @@
 import React from "react";
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "../layouts/AppLayout";
 import RequireAuth from "./RequireAuth";
@@ -211,11 +211,11 @@ export default function AppRoutes() {
   return (
     <React.Suspense fallback={<SuspenseFallback />}>
       <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/login" element={<Navigate to="/login/admin" replace />} />
       <Route path="/login/admin" element={<LoginPage />} />
       <Route path="/login/teacher" element={<LoginPage />} />
-      <Route path="/login/student" element={<LoginPage />} />
-      <Route path="/login/parent" element={<LoginPage />} />
+      <Route path="/login/student" element={<OtpLoginPage />} />
+      <Route path="/login/parent" element={<Navigate to="/login/student" replace />} />
       <Route path="/otp-login" element={<OtpLoginPage />} />
       <Route path="/teacher-activate" element={<TeacherAccessPage mode="activate" />} />
       <Route path="/teacher-forgot-password" element={<TeacherAccessPage mode="reset" />} />

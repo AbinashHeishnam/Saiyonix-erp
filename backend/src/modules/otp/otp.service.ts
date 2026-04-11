@@ -134,6 +134,59 @@ function buildOtpRoleCandidates(primaryRoleType: string): OtpEffectiveRole[] {
   return candidates;
 }
 
+async function ensureStudentParentMatch(
+  user: { id: string; role: { roleType: string }; schoolId: string },
+  studentNumber: string,
+  db: DbClient
+) {
+  const trimmedNumber = studentNumber.trim();
+
+  const student = await db.student.findFirst({
+    where: {
+      schoolId: user.schoolId,
+      deletedAt: null,
+      status: "ACTIVE",
+      OR: [
+        { registrationNumber: trimmedNumber },
+        { admissionNumber: trimmedNumber },
+      ],
+    },
+    select: { id: true, userId: true },
+  });
+
+  if (!student) {
+    throw new ApiError(404, "Student number not found");
+  }
+
+  if (user.role.roleType === "STUDENT") {
+    if (student.userId !== user.id) {
+      throw new ApiError(403, "Student number does not match");
+    }
+    return;
+  }
+
+  if (user.role.roleType === "PARENT") {
+    const parent = await db.parent.findFirst({
+      where: { userId: user.id, schoolId: user.schoolId },
+      select: { id: true },
+    });
+    if (!parent) {
+      throw new ApiError(403, "Parent account not linked");
+    }
+
+    const link = await db.parentStudentLink.findFirst({
+      where: { parentId: parent.id, studentId: student.id },
+      select: { id: true },
+    });
+    if (!link) {
+      throw new ApiError(403, "Student not linked to parent");
+    }
+    return;
+  }
+
+  throw new ApiError(403, "OTP login allowed only for students and parents");
+}
+
 async function resolveOtpLoginContext(
   user: {
     id: string;
@@ -188,7 +241,11 @@ async function resolveOtpLoginContext(
   throw new ApiError(403, "OTP login allowed only for students and parents");
 }
 
-async function getOtpLoginContextOrThrow(mobile: string, db: DbClient) {
+async function getOtpLoginContextOrThrow(
+  mobile: string,
+  studentNumber: string | undefined,
+  db: DbClient
+) {
   const user = await db.user.findUnique({
     where: { mobile },
     include: { role: true },
@@ -208,6 +265,10 @@ async function getOtpLoginContextOrThrow(mobile: string, db: DbClient) {
     throw new ApiError(400, "Invalid phone number");
   }
 
+  if (studentNumber) {
+    await ensureStudentParentMatch(user, studentNumber, db);
+  }
+
   try {
     const context = await resolveOtpLoginContext(user, db);
     return { user, context };
@@ -217,7 +278,11 @@ async function getOtpLoginContextOrThrow(mobile: string, db: DbClient) {
   }
 }
 
-export async function sendOtp(mobile: string, channel?: OtpDeliveryMode) {
+export async function sendOtp(
+  mobile: string,
+  studentNumber?: string,
+  channel?: OtpDeliveryMode
+) {
   logger.info(`[AUTH] OTP_SEND attempt mobile=${mobile}`);
   const configuredMode = resolveOtpDeliveryMode();
   if (channel) {
@@ -227,7 +292,7 @@ export async function sendOtp(mobile: string, channel?: OtpDeliveryMode) {
   }
   const { otp, boundMobile, userId } = await prisma.$transaction(async (tx) => {
     const db = tx as unknown as DbClient;
-    const { user, context } = await getOtpLoginContextOrThrow(mobile, db);
+    const { user, context } = await getOtpLoginContextOrThrow(mobile, studentNumber, db);
     const boundMobile = user.mobile;
 
     if (!boundMobile || boundMobile !== mobile) {
@@ -294,7 +359,11 @@ export async function sendOtp(mobile: string, channel?: OtpDeliveryMode) {
   };
 }
 
-export async function resendOtp(mobile: string, channel?: OtpDeliveryMode) {
+export async function resendOtp(
+  mobile: string,
+  studentNumber?: string,
+  channel?: OtpDeliveryMode
+) {
   logger.info(`[AUTH] OTP_RESEND attempt mobile=${mobile}`);
   const configuredMode = resolveOtpDeliveryMode();
   if (channel) {
@@ -304,7 +373,7 @@ export async function resendOtp(mobile: string, channel?: OtpDeliveryMode) {
   }
   const { otp, boundMobile, userId } = await prisma.$transaction(async (tx) => {
     const db = tx as unknown as DbClient;
-    const { user, context } = await getOtpLoginContextOrThrow(mobile, db);
+    const { user, context } = await getOtpLoginContextOrThrow(mobile, studentNumber, db);
     const boundMobile = user.mobile;
 
     if (!boundMobile || boundMobile !== mobile) {
@@ -376,7 +445,7 @@ export async function resendOtp(mobile: string, channel?: OtpDeliveryMode) {
   };
 }
 
-export async function verifyOtp(mobile: string, otp: string) {
+export async function verifyOtp(mobile: string, studentNumber: string | undefined, otp: string) {
   logger.info(`[AUTH] OTP_VERIFY attempt mobile=${mobile}`);
   const jwtSecret = process.env.JWT_SECRET;
 
@@ -401,6 +470,10 @@ export async function verifyOtp(mobile: string, otp: string) {
 
     if (user.mobile !== mobile) {
       throw new ApiError(400, "Invalid phone number");
+    }
+
+    if (studentNumber) {
+      await ensureStudentParentMatch(user, studentNumber, db);
     }
 
     const record = await tx.otpLog.findFirst({

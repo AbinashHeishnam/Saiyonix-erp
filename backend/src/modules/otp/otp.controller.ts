@@ -10,8 +10,12 @@ export async function sendOtpController(
   next: NextFunction
 ) {
   try {
-    const { mobile, channel } = req.body as { mobile: string; channel?: "sms" | "call" };
-    const result = await sendOtp(mobile, channel);
+    const { mobile, studentNumber, channel } = req.body as {
+      mobile: string;
+      studentNumber?: string;
+      channel?: "sms" | "call";
+    };
+    const result = await sendOtp(mobile, studentNumber, channel);
     return success(res, result, "OTP sent successfully");
   } catch (error) {
     return next(error);
@@ -24,8 +28,12 @@ export async function resendOtpController(
   next: NextFunction
 ) {
   try {
-    const { mobile, channel } = req.body as { mobile: string; channel?: "sms" | "call" };
-    const result = await resendOtp(mobile, channel);
+    const { mobile, studentNumber, channel } = req.body as {
+      mobile: string;
+      studentNumber?: string;
+      channel?: "sms" | "call";
+    };
+    const result = await resendOtp(mobile, studentNumber, channel);
     return success(res, result, "OTP resent successfully");
   } catch (error) {
     return next(error);
@@ -38,12 +46,13 @@ export async function verifyOtpController(
   next: NextFunction
 ) {
   try {
-    const { mobile, otp } = req.body as {
+    const { mobile, studentNumber, otp } = req.body as {
       mobile: string;
+      studentNumber?: string;
       otp: string;
     };
 
-    const result = await verifyOtp(mobile, otp);
+    const result = await verifyOtp(mobile, studentNumber, otp);
     const sameSite: "none" | "lax" =
       process.env.NODE_ENV === "production" ? "none" : "lax";
     const cookieOptions = {

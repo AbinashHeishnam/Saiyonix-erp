@@ -1,6 +1,7 @@
 import axios, { AxiosError, AxiosInstance } from "axios";
 
 import { getAuthSnapshot, getCsrfToken, setAuthSnapshot } from "./authStore";
+import { getLoginPathForRole } from "../../utils/authRedirect";
 
 export const API_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL ?? "http://localhost:3000/api/v1";
 export const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
@@ -109,6 +110,8 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    const roleType = getAuthSnapshot()?.user?.role?.roleType ?? null;
+    const loginPath = getLoginPathForRole(roleType);
     if (!refreshPromise) {
       refreshPromise = refreshClient
         .post("/auth/refresh", {})
@@ -137,6 +140,9 @@ api.interceptors.response.use(
     if (!nextCsrf) {
       const authRoutes = new Set([
         "/login",
+        "/login/admin",
+        "/login/teacher",
+        "/login/student",
         "/otp-login",
         "/email-otp-login",
         "/forgot-password",
@@ -146,7 +152,7 @@ api.interceptors.response.use(
         "/setup-account",
       ]);
       if (!authRoutes.has(window.location.pathname)) {
-        window.location.assign("/login");
+        window.location.replace(loginPath);
       }
       return Promise.reject(error);
     }

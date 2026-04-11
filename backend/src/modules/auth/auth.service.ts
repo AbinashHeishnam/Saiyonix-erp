@@ -1274,7 +1274,7 @@ export async function completeAdminFirstLogin(params: {
 async function requestTeacherOtp(
   identifier: string,
   purpose: string,
-  options?: { strictEmailLookup?: boolean }
+  options?: { strictEmailLookup?: boolean; strictLookup?: boolean }
 ) {
   const parsed = parseTeacherIdentifier(identifier);
   logger.info(`[AUTH] TEACHER_OTP_SEND attempt ${parsed.channel}=${parsed.value}`);
@@ -1282,6 +1282,9 @@ async function requestTeacherOtp(
   const result = await prisma.$transaction(async (tx) => {
     const found = await getTeacherByIdentifier(identifier, tx as DbClient);
     if (!found) {
+      if (options?.strictLookup) {
+        throw new ApiError(404, "Teacher account not found");
+      }
       if (options?.strictEmailLookup && parsed.channel === "email") {
         throw new ApiError(404, "Email not registered");
       }
@@ -1611,7 +1614,7 @@ export async function completeTeacherActivation(resetToken: string, newPassword:
 }
 
 export async function requestTeacherForgotPasswordOtp(identifier: string) {
-  return requestTeacherOtp(identifier, TEACHER_RESET_PURPOSE);
+  return requestTeacherOtp(identifier, TEACHER_RESET_PURPOSE, { strictLookup: true });
 }
 
 export async function verifyTeacherForgotPasswordOtp(identifier: string, otp: string) {

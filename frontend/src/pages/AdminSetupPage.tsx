@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 
 import AuthShell from "../components/AuthShell";
 import Button from "../components/Button";
 import Input from "../components/Input";
+import OtpInput from "../components/OtpInput";
 import {
   completeAdminSetup,
   sendAdminSetupOtp,
@@ -53,17 +55,16 @@ export default function AdminSetupPage() {
     setLoadingOtp(true);
     try {
       if (!email) {
-        throw new Error("Email is required");
+        throw new Error("Email context missing. Please re-login.");
       }
       const data = await sendAdminSetupOtp();
       setOtp("");
       setOtpSent(true);
       setOtpVerified(false);
       setResendCooldown(60);
-      setMessage("OTP sent to your email.");
+      setMessage("A secondary verification code has been sent to your email.");
       if (data?.otp) {
         setDevOtp(String(data.otp));
-        setMessage("OTP sent. Use the code below in this environment.");
       }
     } catch (err: unknown) {
       const apiMessage =
@@ -73,7 +74,7 @@ export default function AdminSetupPage() {
         setOtpSent(true);
         setOtpVerified(false);
         setResendCooldown(60);
-        setMessage("An OTP was recently sent. Please check your email and enter it below.");
+        setMessage("A code was recently sent. Please check your inbox.");
       } else {
         setError(apiMessage);
       }
@@ -85,11 +86,15 @@ export default function AdminSetupPage() {
   const handleVerifyOtp = async () => {
     setError(null);
     setMessage(null);
+    if (otp.length < 6) {
+      setError("Please enter the complete 6-digit passcode.");
+      return;
+    }
     setLoadingVerify(true);
     try {
       await verifyAdminSetupOtp({ email, otp });
       setOtpVerified(true);
-      setMessage("OTP verified successfully.");
+      setMessage("Identity verified successfully. You may now update your password.");
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -106,17 +111,7 @@ export default function AdminSetupPage() {
     setMessage(null);
 
     if (!email) {
-      setError("Email is required.");
-      return;
-    }
-
-    if (!isAdminRole(user?.role?.roleType) && user?.role?.roleType !== "TEACHER") {
-      setError("This setup flow is only for admin and teacher roles.");
-      return;
-    }
-
-    if (!otpVerified) {
-      setError("Please verify the OTP before continuing.");
+      setError("Email context missing.");
       return;
     }
 
@@ -150,91 +145,127 @@ export default function AdminSetupPage() {
 
   return (
     <AuthShell
-      title={`${roleLabel} Secure Setup`}
-      subtitle="Confirm your identity and set a new password to unlock your workspace."
+      title={`${roleLabel} Profile Setup`}
+      subtitle="Complete these security steps to finalize your workspace access."
       audience={audience}
     >
-      {message && (
-        <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3.5 text-[13px] font-medium text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-900/20 dark:text-emerald-400">
-          {message}
-        </div>
-      )}
-      {error && (
-        <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3.5 text-[13px] font-medium text-rose-600 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-400">
-          {error}
-        </div>
-      )}
-      {devOtp && (
-        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5 text-[13px] font-medium text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-400">
-          Dev OTP: <span className="font-semibold">{devOtp}</span>
-        </div>
-      )}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={otpVerified ? "password" : "verification"}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.25 }}
+        >
+          {message && (
+            <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3.5 text-[13px] font-medium text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-900/20 dark:text-emerald-400">
+              {message}
+            </div>
+          )}
+          {error && (
+            <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3.5 text-[13px] font-medium text-rose-600 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-400">
+              {error}
+            </div>
+          )}
+          {devOtp && (
+            <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5 text-[13px] font-medium text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-400">
+              Development OTP: <span className="font-bold tracking-widest">{devOtp}</span>
+            </div>
+          )}
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-5 text-left">
-        <Input label="Email address" value={email} disabled />
-        <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-          <Input
-            label="Secure passcode"
-            value={otp}
-            onChange={(e) => setOtp(e.target.value)}
-            placeholder="6-digit code"
-            autoComplete="one-time-code"
-          />
-          <div className="pt-2 sm:pt-0">
-            <Button
-              type="button"
-              variant="secondary"
-              className="h-11 sm:w-auto w-full text-[14px]"
-              onClick={handleSendOtp}
-              disabled={loadingOtp || resendCooldown > 0}
-            >
-              {loadingOtp
-                ? "Sending..."
-                : resendCooldown > 0
-                  ? `Resend in ${resendCooldown}s`
-                  : otpSent
-                    ? "Resend OTP"
-                    : "Send OTP"}
-            </Button>
-          </div>
-        </div>
-        <div className="pt-2">
-          <Button
-            type="button"
-            variant="secondary"
-            fullWidth
-            onClick={handleVerifyOtp}
-            disabled={!otp || loadingVerify || otpVerified}
-            className="py-2.5 text-[15px]"
-          >
-            {loadingVerify ? "Verifying..." : otpVerified ? "Verified" : "Verify OTP"}
-          </Button>
-        </div>
+          {!otpVerified ? (
+            <div className="flex flex-col gap-6">
+              <Input label="Your Email" value={email} disabled className="bg-slate-50/50" />
 
-        <div className="border-t border-slate-100 dark:border-slate-800/60 my-2 pt-6"></div>
+              {!otpSent ? (
+                <div className="pt-2">
+                  <Button
+                    onClick={handleSendOtp}
+                    loading={loadingOtp}
+                    fullWidth
+                    className="py-3 text-[15px] shadow-sm"
+                  >
+                    Send Verification Code &rarr;
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-8 text-center bg-sky-50/30 dark:bg-sky-950/20 p-6 rounded-3xl border border-sky-100 dark:border-sky-900/30">
+                  <div className="space-y-4">
+                    <label className="text-[14px] font-bold text-slate-700 dark:text-slate-300">
+                      Enter 6-digit Code
+                    </label>
+                    <OtpInput value={otp} onChange={setOtp} />
+                  </div>
 
-        <Input
-          label="New password"
-          type="password"
-          value={newPassword}
-          onChange={(e) => setNewPassword(e.target.value)}
-          placeholder="Create a strong password"
-        />
-        <Input
-          label="Confirm password"
-          type="password"
-          value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
-          placeholder="Re-enter password"
-          error={passwordMismatch ? "Passwords do not match" : undefined}
-        />
+                  <div className="flex flex-col gap-4">
+                    <Button
+                      onClick={handleVerifyOtp}
+                      loading={loadingVerify}
+                      disabled={otp.length < 6}
+                      fullWidth
+                      className="py-3 text-[15px] shadow-sm"
+                    >
+                      Verify Identity &rarr;
+                    </Button>
 
-        <div className="pt-4">
-          <Button type="submit" fullWidth loading={loadingSubmit} className="py-2.5 text-[15px] shadow-sm">
-            Complete Setup
-          </Button>
-        </div>
-      </form>
+                    <button
+                      type="button"
+                      onClick={handleSendOtp}
+                      disabled={resendCooldown > 0}
+                      className="text-[13px] font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors disabled:opacity-50"
+                    >
+                      {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Didn't receive code? Resend"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="flex flex-col gap-6 text-left">
+              <div className="bg-emerald-50/50 dark:bg-emerald-950/20 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-900/30 flex items-center gap-3 mb-2">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <p className="text-[13px] font-semibold text-emerald-700 dark:text-emerald-400">Identity Verified</p>
+              </div>
+
+              <Input
+                label="Create New Password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Choose a strong password"
+                required
+                className="py-3"
+              />
+              <Input
+                label="Confirm New Password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-type your password"
+                error={passwordMismatch ? "Passwords do not match" : undefined}
+                required
+                className="py-3"
+              />
+
+              <div className="pt-4">
+                <Button
+                  type="submit"
+                  fullWidth
+                  loading={loadingSubmit}
+                  disabled={!newPassword || passwordMismatch}
+                  className="py-3 text-[15px] shadow-[0_4px_14px_0_rgba(14,165,233,0.3)] hover:shadow-[0_6px_20px_0_rgba(14,165,233,0.2)]"
+                >
+                  Save & Unlock Profile &rarr;
+                </Button>
+              </div>
+            </form>
+          )}
+        </motion.div>
+      </AnimatePresence>
     </AuthShell>
   );
 }

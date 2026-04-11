@@ -16,6 +16,7 @@ import {
   getSession,
 } from "../services/api/auth";
 import { initAuthStore, setAuthSnapshot, subscribeAuth, type AuthSnapshot } from "../services/api/authStore";
+import { getLoginPathForRole } from "../utils/authRedirect";
 
 interface AuthContextValue {
   user: User | null;
@@ -130,12 +131,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
       },
       logout: async () => {
+        const roleType = auth?.user?.role?.roleType ?? auth?.role ?? null;
+        const redirectTo = getLoginPathForRole(roleType);
         try {
           await logout();
         } catch {
           // ignore server errors
         }
         setAuthSnapshot(null);
+        window.location.replace(redirectTo);
       },
     }),
     [auth, isLoading]

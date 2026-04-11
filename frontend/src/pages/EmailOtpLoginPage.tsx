@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import AuthShell from "../components/AuthShell";
 import Button from "../components/Button";
 import Input from "../components/Input";
+import OtpInput from "../components/OtpInput";
 import { useAuth } from "../contexts/AuthContext";
 import { isAdminRole } from "../utils/role";
 
@@ -106,11 +107,8 @@ export default function EmailOtpLoginPage() {
       subtitle="A secure passcode will be sent to your email."
       helper={
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-[13px]">
-          <a href="/login" className="font-medium text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors">
+          <a href="/login/admin" className="font-medium text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors">
             &larr; Use password
-          </a>
-          <a href="/otp-login" className="font-medium text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 transition-colors">
-            Sign in with Mobile OTP &rarr;
           </a>
         </div>
       }
@@ -121,7 +119,7 @@ export default function EmailOtpLoginPage() {
         </div>
       )}
       {step === "email" ? (
-        <form onSubmit={handleSendOtp} className="flex flex-col gap-5 text-left">
+        <form onSubmit={handleSendOtp} className="flex flex-col gap-6 text-left">
           <Input
             label="Email address"
             value={email}
@@ -130,6 +128,7 @@ export default function EmailOtpLoginPage() {
             placeholder="name@school.edu"
             required
             autoComplete="email"
+            className="py-3 text-[15px]"
           />
           <div className="pt-2">
             <Button
@@ -137,26 +136,28 @@ export default function EmailOtpLoginPage() {
               loading={loading}
               disabled={sendCooldown > 0}
               fullWidth
-              className="py-2.5 text-[15px] shadow-sm"
+              className="py-3 text-[15px] shadow-sm"
             >
-              {sendCooldown > 0 ? `Wait ${sendCooldown}s` : "Send Passcode"}
+              {sendCooldown > 0 ? `Wait ${sendCooldown}s to resend` : "Send Passcode"}
             </Button>
           </div>
         </form>
       ) : (
-        <form onSubmit={handleVerifyOtp} className="flex flex-col gap-5 text-left">
-          <Input
-            label="Secure passcode"
-            value={otp}
-            onChange={(e) => setOtp(e.target.value)}
-            placeholder="Enter the 6-digit code"
-            required
-            autoComplete="one-time-code"
-          />
-          <div className="flex items-center justify-between text-[13px] text-slate-500 pt-1">
+        <form onSubmit={handleVerifyOtp} className="flex flex-col gap-8 text-left">
+          <div className="flex flex-col items-center gap-4">
+            <label className="text-[13px] font-semibold text-slate-600 dark:text-slate-400">
+              Enter 6-digit secure code
+            </label>
+            <OtpInput value={otp} onChange={setOtp} />
+          </div>
+          <div className="flex items-center justify-between text-[13px] text-slate-500 pt-5 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
-              onClick={() => setStep("email")}
+              onClick={() => {
+                setError("");
+                setOtp("");
+                setStep("email");
+              }}
               className="font-medium text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors"
             >
               Change email
@@ -171,8 +172,8 @@ export default function EmailOtpLoginPage() {
             </button>
           </div>
           <div className="pt-2">
-            <Button type="submit" loading={loading} fullWidth className="py-2.5 text-[15px] shadow-sm">
-              Verify & Sign in
+            <Button type="submit" loading={loading} disabled={otp.length < 6} fullWidth className="py-3 text-[15px] shadow-[0_4px_14px_0_rgba(14,165,233,0.39)] hover:shadow-[0_6px_20px_rgba(14,165,233,0.23)] hover:bg-sky-500 transition-shadow">
+              Verify & Sign In &rarr;
             </Button>
           </div>
         </form>
