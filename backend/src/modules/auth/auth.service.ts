@@ -11,6 +11,7 @@ import { ApiError } from "@/core/errors/apiError";
 import { updateAuthUserCache } from "@/middleware/auth.middleware";
 import { sendPhoneOtp } from "../../services/sms.service";
 import { assertOtpDeliveryConfigured } from "@/services/sms/config";
+import type { OtpDeliveryMode } from "@/services/sms/types";
 import { env } from "@/config/env";
 import { hashRefreshToken } from "@/utils/refreshToken";
 import { sendOtpEmail } from "@/services/email/email.service";
@@ -1274,7 +1275,7 @@ export async function completeAdminFirstLogin(params: {
 async function requestTeacherOtp(
   identifier: string,
   purpose: string,
-  options?: { strictEmailLookup?: boolean; strictLookup?: boolean }
+  options?: { strictEmailLookup?: boolean; strictLookup?: boolean; phoneDeliveryMode?: OtpDeliveryMode }
 ) {
   const parsed = parseTeacherIdentifier(identifier);
   logger.info(`[AUTH] TEACHER_OTP_SEND attempt ${parsed.channel}=${parsed.value}`);
@@ -1405,7 +1406,7 @@ async function requestTeacherOtp(
     await deliverEmailOtpForTeacher(deliveryValue, deliveryOtp, purpose);
   } else {
     await ensureOtpDeliveryConfigured();
-    await sendPhoneOtp(deliveryValue, deliveryOtp);
+    await sendPhoneOtp(deliveryValue, deliveryOtp, options?.phoneDeliveryMode);
   }
 
   return { message: "If the account exists, an OTP has been sent" };
@@ -1565,7 +1566,9 @@ async function completeTeacherPassword(resetToken: string, expectedPurpose: stri
 
 export async function requestTeacherActivationOtp(identifier: string) {
   return requestTeacherOtp(identifier, TEACHER_ACTIVATION_PURPOSE, {
+    strictLookup: true,
     strictEmailLookup: true,
+    phoneDeliveryMode: "call",
   });
 }
 

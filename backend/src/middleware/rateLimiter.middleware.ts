@@ -125,8 +125,8 @@ OTP LIMITER
 protect SMS spam + brute force
 */
 export const otpLimiter = buildLimiter({
-  windowMs: isProd ? 5 * 60 * 1000 : 60 * 1000,
-  max: isProd ? 3 : 10,
+  windowMs: isProd ? 10 * 60 * 1000 : 60 * 1000,
+  max: isProd ? 10 : 10,
   keyPrefix: "otp",
   message: {
     success: false,

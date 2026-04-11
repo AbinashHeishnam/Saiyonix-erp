@@ -48,7 +48,13 @@ export default function TeacherAccessPage({ mode }: { mode: Mode }) {
     return () => window.clearInterval(timer);
   }, [resendCooldown]);
 
-  const getIdentifier = () => (method === "email" ? email.trim() : phone.trim());
+  useEffect(() => {
+    if (isActivation && method !== "email") {
+      setMethod("email");
+    }
+  }, [isActivation, method]);
+
+  const getIdentifier = () => (isActivation || method === "email" ? email.trim() : phone.trim());
 
   const sendOtp = async () => {
     setError(null);
@@ -168,35 +174,37 @@ export default function TeacherAccessPage({ mode }: { mode: Mode }) {
 
           {step === "identify" && (
             <div className="flex flex-col gap-6 text-left">
-              <div className="flex flex-col gap-2">
-                <label className="text-[13px] font-semibold text-slate-500 dark:text-slate-400 ml-1">
-                  Choose Verification Method
-                </label>
-                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-2xl">
-                  <button
-                    type="button"
-                    onClick={() => setMethod("email")}
-                    className={`py-2 text-[14px] font-semibold rounded-xl transition-all duration-200 ${method === "email"
-                        ? "bg-white shadow-sm text-sky-600 dark:bg-slate-700 dark:text-white"
-                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
-                      }`}
-                  >
-                    Email Address
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMethod("phone")}
-                    className={`py-2 text-[14px] font-semibold rounded-xl transition-all duration-200 ${method === "phone"
-                        ? "bg-white shadow-sm text-sky-600 dark:bg-slate-700 dark:text-white"
-                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
-                      }`}
-                  >
-                    Phone Number
-                  </button>
+              {!isActivation && (
+                <div className="flex flex-col gap-2">
+                  <label className="text-[13px] font-semibold text-slate-500 dark:text-slate-400 ml-1">
+                    Choose Verification Method
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-2xl">
+                    <button
+                      type="button"
+                      onClick={() => setMethod("email")}
+                      className={`py-2 text-[14px] font-semibold rounded-xl transition-all duration-200 ${method === "email"
+                          ? "bg-white shadow-sm text-sky-600 dark:bg-slate-700 dark:text-white"
+                          : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
+                        }`}
+                    >
+                      Email Address
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMethod("phone")}
+                      className={`py-2 text-[14px] font-semibold rounded-xl transition-all duration-200 ${method === "phone"
+                          ? "bg-white shadow-sm text-sky-600 dark:bg-slate-700 dark:text-white"
+                          : "text-slate-500 hover:text-slate-700 dark:text-slate-400"
+                        }`}
+                    >
+                      Phone Number
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {method === "email" ? (
+              {isActivation || method === "email" ? (
                 <Input
                   label="Teacher Email"
                   value={email}

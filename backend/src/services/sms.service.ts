@@ -20,12 +20,12 @@ export async function sendPhoneOtp(
 ) {
   const normalizedMobile = normalizeMobileForLog(mobile);
   const configured = await assertOtpDeliveryConfigured();
-  const mode = configured.mode;
+  const mode = requestedMode ?? configured.mode;
   const provider = configured.provider;
 
-  if (requestedMode && requestedMode !== mode) {
+  if (requestedMode && requestedMode !== configured.mode) {
     logger.warn(
-      `[OTP] delivery_mode_mismatch requested=${requestedMode} configured=${mode} mobile=${normalizedMobile}`
+      `[OTP] delivery_mode_mismatch requested=${requestedMode} configured=${configured.mode} mobile=${normalizedMobile}`
     );
   }
 
