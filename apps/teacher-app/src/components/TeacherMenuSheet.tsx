@@ -85,7 +85,11 @@ export default function TeacherMenuSheet({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <AnimatedPressable
-          style={[styles.sheet, { paddingTop: insets.top + 16, width }, sheetStyle]}
+          style={[
+            styles.sheet,
+            { paddingTop: insets.top + 18, paddingBottom: insets.bottom + 24, width },
+            sheetStyle,
+          ]}
           onPress={() => {}}
         >
           <View style={styles.header}>
@@ -161,29 +165,29 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     height: "100%",
     paddingHorizontal: 18,
-    paddingBottom: 24,
     borderTopRightRadius: 24,
     borderBottomRightRadius: 24,
   },
   content: {
-    paddingTop: 16,
-    gap: 18,
+    paddingTop: 18,
+    paddingBottom: 12,
+    gap: 20,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 6,
+    marginBottom: 10,
   },
   brand: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 12,
   },
   logoStub: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 13,
     borderWidth: 1,
     borderColor: colors.ink[100],
     backgroundColor: colors.white,
@@ -191,20 +195,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   logoText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "700",
     color: colors.ink[500],
     fontFamily: typography.fontDisplay,
   },
   logoImage: {
-    width: 28,
-    height: 28,
+    width: 30,
+    height: 30,
   },
   brandText: {
     gap: 2,
   },
   brandTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "700",
     color: colors.ink[900],
     fontFamily: typography.fontDisplay,
@@ -217,9 +221,9 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontBody,
   },
   closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 11,
     borderWidth: 1,
     borderColor: colors.ink[100],
     alignItems: "center",
@@ -227,41 +231,41 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
   group: {
-    gap: 8,
+    gap: 10,
   },
   groupHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginTop: 6,
+    marginTop: 8,
   },
   groupTitle: {
-    fontSize: 11,
-    letterSpacing: 1.4,
+    fontSize: 10,
+    letterSpacing: 1.6,
     color: colors.ink[400],
     fontFamily: typography.fontBody,
     fontWeight: "700",
   },
   groupItems: {
-    marginLeft: 12,
-    paddingLeft: 10,
+    marginLeft: 10,
+    paddingLeft: 12,
     borderLeftWidth: 1,
     borderLeftColor: "rgba(226,232,240,0.7)",
-    gap: 4,
-    marginTop: 6,
+    gap: 6,
+    marginTop: 8,
   },
   item: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 12,
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
   },
   iconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 10,
+    width: 30,
+    height: 30,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.ink[50],

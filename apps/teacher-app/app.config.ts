@@ -13,7 +13,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     resizeMode: "contain",
     backgroundColor: "#1e223c",
   },
+  android: {
+    package: "com.saiyonix.teacher",
+  },
+  plugins: ["expo-secure-store"],
   extra: {
-    apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api/v1",
+    apiBaseUrl:
+      process.env.EXPO_PUBLIC_API_BASE_URL ??
+      "https://api.kangleicareersolution.co.in/api/v1",
+    eas: {
+      projectId: "92864419-3c9d-4b2d-9ad4-65572afd7216",
+    },
   },
 });

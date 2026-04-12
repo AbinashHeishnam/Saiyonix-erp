@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { ActivityIndicator, Animated, Image, StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, typography } from "@saiyonix/ui";
 import useSchoolBranding from "../../hooks/useSchoolBranding";
 
@@ -13,6 +14,7 @@ export default function BrandedLoadingScreen({
 }) {
   const pulse = useRef(new Animated.Value(0)).current;
   const { schoolName, logoUrl } = useSchoolBranding();
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -48,7 +50,7 @@ export default function BrandedLoadingScreen({
   return (
     <LinearGradient
       colors={[colors.ink[800], colors.ink[700], colors.sky[500]]}
-      style={styles.container}
+      style={[styles.container, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 32 }]}
     >
       <View style={styles.brandBlock}>
         <Animated.View style={[styles.logoStub, shimmer]}>
@@ -74,20 +76,22 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: 24,
+    gap: 26,
+    paddingHorizontal: 24,
   },
   brandBlock: {
     alignItems: "center",
-    gap: 10,
+    gap: 12,
   },
   statusRow: {
     alignItems: "center",
-    gap: 10,
+    gap: 8,
   },
   statusText: {
     fontSize: 12,
     color: "rgba(255,255,255,0.8)",
     fontFamily: typography.fontBody,
+    textAlign: "center",
   },
   logoStub: {
     width: 64,

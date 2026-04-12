@@ -192,12 +192,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.ink[50],
   },
   content: {
-    padding: 20,
-    gap: 16,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 28,
+    gap: 18,
   },
   hero: {
     borderRadius: 20,
-    padding: 20,
+    padding: 22,
     overflow: "hidden",
   },
   heroGlowTop: {
@@ -219,7 +221,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(59,130,246,0.25)",
   },
   heroContent: {
-    gap: 10,
+    gap: 12,
   },
   heroGreeting: {
     color: "rgba(255,255,255,0.8)",
@@ -228,13 +230,13 @@ const styles = StyleSheet.create({
   },
   heroTitle: {
     color: colors.white,
-    fontSize: 22,
+    fontSize: 23,
     fontWeight: "700",
     fontFamily: typography.fontDisplay,
   },
   heroSubtitle: {
     color: "rgba(255,255,255,0.85)",
-    fontSize: 13,
+    fontSize: 14,
     fontFamily: typography.fontBody,
   },
   heroBadges: {
@@ -243,8 +245,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   heroBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     borderRadius: 999,
     backgroundColor: "rgba(255,255,255,0.15)",
   },
@@ -259,13 +261,13 @@ const styles = StyleSheet.create({
   heroActions: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
-    marginTop: 6,
+    gap: 10,
+    marginTop: 8,
   },
   statsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 12,
+    gap: 14,
   },
   statCard: {
     flexGrow: 1,
@@ -273,18 +275,18 @@ const styles = StyleSheet.create({
     minWidth: 140,
   },
   gridTwo: {
-    gap: 16,
+    gap: 18,
   },
   list: {
     marginTop: 12,
-    gap: 12,
+    gap: 14,
   },
   scheduleItem: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    padding: 12,
-    borderRadius: 14,
+    padding: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.ink[100],
     backgroundColor: "#f8fafc",
@@ -341,11 +343,11 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontBody,
   },
   messageItem: {
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.ink[100],
     backgroundColor: "#f8fafc",
-    padding: 12,
+    padding: 14,
     gap: 6,
   },
   messageHeader: {
@@ -360,8 +362,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 12,
-    borderRadius: 14,
+    padding: 14,
+    borderRadius: 16,
     backgroundColor: "#fff7ed",
     borderWidth: 1,
     borderColor: colors.sunrise[100],
@@ -370,8 +372,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   noticeCard: {
-    padding: 14,
-    borderRadius: 14,
+    padding: 16,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.ink[100],
     backgroundColor: colors.white,

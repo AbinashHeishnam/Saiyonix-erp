@@ -85,18 +85,20 @@ export default function TeacherLoginScreen({ navigation }: NativeStackScreenProp
 
 const styles = StyleSheet.create({
   content: {
-    gap: 16,
+    gap: 18,
+    paddingTop: 4,
   },
   error: {
-    padding: 12,
-    borderRadius: 12,
+    padding: 14,
+    borderRadius: 14,
     backgroundColor: colors.rose[50],
     color: colors.rose[600],
     fontFamily: typography.fontBody,
     fontSize: 12,
+    lineHeight: 18,
   },
   links: {
-    gap: 8,
+    gap: 10,
   },
   link: {
     fontSize: 13,
@@ -110,7 +112,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   passwordWrap: {
-    gap: 6,
+    gap: 8,
   },
   showToggle: {
     alignSelf: "flex-end",

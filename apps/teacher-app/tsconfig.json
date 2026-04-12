@@ -1,15 +1,26 @@
 {
-  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
     "jsx": "react-jsx",
+    "moduleResolution": "Bundler",
+    "strict": false,
+    "allowJs": true,
+    "skipLibCheck": true,
     "types": [
       "react"
     ],
-    "allowJs": true
+    "baseUrl": ".",
+    "paths": {
+      "@saiyonix/*": [
+        "packages/*/src"
+      ]
+    }
   },
   "include": [
     "**/*.ts",
     "**/*.tsx",
     "index.js"
-  ]
+  ],
+  "extends": "expo/tsconfig.base"
 }

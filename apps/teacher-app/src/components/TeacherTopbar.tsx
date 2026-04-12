@@ -63,7 +63,7 @@ export default function TeacherTopbar() {
   };
 
   return (
-    <View style={[styles.wrap, { paddingTop: insets.top + 8 }]}>
+    <View style={[styles.wrap, { paddingTop: insets.top + 10 }]}>
       <View style={styles.row}>
         <View style={styles.left}>
           <Pressable onPress={() => setMenuOpen(true)} style={styles.iconButton}>
@@ -116,8 +116,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(226,232,240,0.7)",
-    paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
   },
   row: {
     flexDirection: "row",
@@ -134,12 +134,12 @@ const styles = StyleSheet.create({
   right: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
   },
   iconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 14,
     backgroundColor: colors.white,
     borderWidth: 1,
     borderColor: colors.ink[100],
@@ -165,31 +165,31 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   title: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "700",
     color: colors.ink[900],
     fontFamily: typography.fontDisplay,
   },
   subtitle: {
-    fontSize: 11,
+    fontSize: 12,
     color: colors.ink[500],
     fontFamily: typography.fontBody,
   },
   userChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    gap: 8,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderWidth: 1,
     borderColor: colors.ink[100],
     backgroundColor: colors.white,
   },
   avatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 9,
     backgroundColor: colors.ink[900],
     alignItems: "center",
     justifyContent: "center",
