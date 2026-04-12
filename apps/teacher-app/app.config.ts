@@ -1,0 +1,19 @@
+import type { ExpoConfig, ConfigContext } from "@expo/config";
+
+export default ({ config }: ConfigContext): ExpoConfig => ({
+  ...config,
+  name: "SaiyoniX Teacher",
+  slug: "saiyonix-teacher",
+  scheme: "saiyonix-teacher",
+  version: "0.1.0",
+  orientation: "portrait",
+  icon: "./assets/icon.png",
+  splash: {
+    image: "./assets/splash.png",
+    resizeMode: "contain",
+    backgroundColor: "#1e223c",
+  },
+  extra: {
+    apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api/v1",
+  },
+});
