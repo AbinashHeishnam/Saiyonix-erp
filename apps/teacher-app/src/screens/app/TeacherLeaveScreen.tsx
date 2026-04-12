@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { applyTeacherLeave, listTeacherLeaves, resolvePublicUrl } from "@saiyonix/api";
 import { Button, Card, EmptyState, ErrorState, PageHeader, Select, StatusBadge, colors, typography } from "@saiyonix/ui";
 import { formatDate } from "@saiyonix/utils";
+import AppDatePicker from "../../components/AppDatePicker";
 import { toUploadFile } from "../../utils/files";
 import PageShell from "../../components/PageShell";
 
@@ -44,6 +45,12 @@ export default function TeacherLeaveScreen() {
   const [queryText, setQueryText] = useState("");
   const [selected, setSelected] = useState<any | null>(null);
   const [file, setFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
+  const [pickerField, setPickerField] = useState<"fromDate" | "toDate" | null>(null);
+
+  const setDateField = (field: "fromDate" | "toDate", value: Date) => {
+    const iso = value.toISOString().slice(0, 10);
+    setForm((prev) => ({ ...prev, [field]: iso }));
+  };
 
   const items = useMemo(() => {
     const list = query.data ?? [];
@@ -105,21 +112,15 @@ export default function TeacherLeaveScreen() {
         <View style={styles.formGrid}>
           <View style={styles.formField}>
             <Text style={styles.label}>From Date</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="YYYY-MM-DD"
-              value={form.fromDate}
-              onChangeText={(value) => setForm({ ...form, fromDate: value })}
-            />
+            <Pressable style={styles.input} onPress={() => setPickerField("fromDate")}>
+              <Text style={styles.inputText}>{form.fromDate || "Select date"}</Text>
+            </Pressable>
           </View>
           <View style={styles.formField}>
             <Text style={styles.label}>To Date</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="YYYY-MM-DD"
-              value={form.toDate}
-              onChangeText={(value) => setForm({ ...form, toDate: value })}
-            />
+            <Pressable style={styles.input} onPress={() => setPickerField("toDate")}>
+              <Text style={styles.inputText}>{form.toDate || "Select date"}</Text>
+            </Pressable>
           </View>
           <Select
             label="Leave Type"
@@ -248,6 +249,18 @@ export default function TeacherLeaveScreen() {
           </View>
         </View>
       </Modal>
+
+      <AppDatePicker
+        visible={pickerField !== null}
+        title={pickerField === "fromDate" ? "Select From Date" : "Select To Date"}
+        value={pickerField ? form[pickerField] : undefined}
+        onCancel={() => setPickerField(null)}
+        onConfirm={(selectedDate) => {
+          if (!pickerField) return;
+          setDateField(pickerField, selectedDate);
+          setPickerField(null);
+        }}
+      />
     </ScrollView>
     </PageShell>
   );
@@ -272,7 +285,7 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 12,
-    color: colors.ink[600],
+    color: colors.ink[700],
     fontFamily: typography.fontBody,
     fontWeight: "600",
   },
@@ -284,8 +297,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 13,
     fontFamily: typography.fontBody,
-    color: colors.ink[800],
+    color: colors.ink[900],
     backgroundColor: colors.white,
+  },
+  inputText: {
+    fontSize: 13,
+    fontFamily: typography.fontBody,
+    color: colors.ink[900],
+    fontWeight: "600",
   },
   textarea: {
     minHeight: 80,
@@ -301,8 +320,9 @@ const styles = StyleSheet.create({
   },
   fileButtonText: {
     fontSize: 12,
-    color: colors.ink[700],
+    color: colors.ink[800],
     fontFamily: typography.fontBody,
+    fontWeight: "600",
   },
   error: {
     fontSize: 12,
@@ -339,13 +359,13 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 14,
-    fontWeight: "600",
-    color: colors.ink[700],
+    fontWeight: "700",
+    color: colors.ink[800],
     fontFamily: typography.fontBody,
   },
   meta: {
     fontSize: 12,
-    color: colors.ink[500],
+    color: colors.ink[600],
     fontFamily: typography.fontBody,
   },
   attachmentRow: {
@@ -381,8 +401,9 @@ const styles = StyleSheet.create({
   },
   modalValue: {
     fontSize: 13,
-    color: colors.ink[700],
+    color: colors.ink[800],
     fontFamily: typography.fontBody,
+    fontWeight: "500",
   },
   attachmentChip: {
     backgroundColor: colors.ink[50],
@@ -392,7 +413,8 @@ const styles = StyleSheet.create({
   },
   attachmentText: {
     fontSize: 11,
-    color: colors.ink[700],
+    color: colors.ink[800],
     fontFamily: typography.fontBody,
+    fontWeight: "600",
   },
 });

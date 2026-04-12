@@ -116,6 +116,11 @@ export async function getClassroomChatRoomMessages(roomId: string, params?: { li
   return res.data?.data ?? res.data;
 }
 
+export async function submitAssignment(payload: { assignmentId: string; submissionUrl: string; studentId?: string }) {
+  const res = await api.post("/classroom/assignment/submit", payload);
+  return res.data?.data ?? res.data;
+}
+
 export async function getAssignmentSubmissions(assignmentId: string, params?: { page?: number; limit?: number }) {
   const res = await api.get(`/assignments/${assignmentId}/submissions`, { params });
   return res.data?.data ?? res.data;

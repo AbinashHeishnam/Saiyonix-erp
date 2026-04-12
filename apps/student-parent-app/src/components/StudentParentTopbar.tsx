@@ -4,21 +4,22 @@ import { Feather } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getUnreadCount } from "@saiyonix/api";
+import { getNotificationsUnreadCount } from "@saiyonix/api";
 import { useAuth } from "@saiyonix/auth";
 import { colors, typography } from "@saiyonix/ui";
-import TeacherMenuSheet from "./TeacherMenuSheet";
+import StudentParentMenuSheet from "./StudentParentMenuSheet";
+import { TAB_ROUTES } from "../config/webParity";
 
-export default function TeacherTopbar() {
+export default function StudentParentTopbar() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { user, role, logout } = useAuth();
+  const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const isRestricted = Boolean(user?.restricted);
   const { data: unreadData } = useQuery({
     queryKey: ["notification-unread-count"],
-    queryFn: getUnreadCount,
+    queryFn: getNotificationsUnreadCount,
     enabled: Boolean(user) && !isRestricted,
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -28,34 +29,21 @@ export default function TeacherTopbar() {
       return count < 1;
     },
   });
-  const unreadCount = typeof unreadData?.count === "number" ? unreadData.count : 0;
+
+  const unreadCount =
+    typeof unreadData === "number"
+      ? unreadData
+      : typeof (unreadData as any)?.count === "number"
+        ? (unreadData as any).count
+        : 0;
 
   const initials = useMemo(() => {
-    if (!user?.email) return "T";
-    return user.email.slice(0, 1).toUpperCase();
+    const source = user?.email?.split("@")[0]?.trim();
+    return (source?.[0] ?? "U").toUpperCase();
   }, [user?.email]);
 
-  const today = useMemo(
-    () =>
-      new Date().toLocaleDateString("en-IN", {
-        weekday: "long",
-        day: "numeric",
-        month: "short",
-      }),
-    []
-  );
-
-  const roleLabel = useMemo(() => {
-    if (!role) return "Teacher";
-    if (role === "SUPER_ADMIN") return "Super Admin";
-    if (role === "ACADEMIC_SUB_ADMIN") return "Academic Admin";
-    if (role === "FINANCE_SUB_ADMIN") return "Finance Admin";
-    return role.charAt(0) + role.slice(1).toLowerCase();
-  }, [role]);
-
   const navigateTo = (route: string) => {
-    const tabRoutes = new Set(["Dashboard", "Classroom", "Timetable", "Attendance", "Alerts"]);
-    if (tabRoutes.has(route)) {
+    if (TAB_ROUTES.has(route as any)) {
       (navigation as any).navigate("Tabs", { screen: route });
       return;
     }
@@ -63,49 +51,46 @@ export default function TeacherTopbar() {
   };
 
   return (
-    <View style={[styles.wrap, { paddingTop: insets.top + 10 }]}>
+    <View style={[styles.wrap, { paddingTop: insets.top + 12 }]}>
       <View style={styles.row}>
         <View style={styles.left}>
           <Pressable onPress={() => setMenuOpen(true)} style={styles.iconButton}>
-            <Feather name="menu" size={18} color={colors.ink[600]} />
+            <Feather name="menu" size={18} color={colors.ink[500]} />
           </Pressable>
-          <View>
-            <Text style={styles.title}>Teacher Workspace</Text>
-            <Text style={styles.subtitle}>{today}</Text>
-          </View>
         </View>
+
+        <View pointerEvents="none" style={styles.center}>
+          <Text style={styles.erpLabel}>ERP</Text>
+        </View>
+
         <View style={styles.right}>
           {!isRestricted ? (
-            <Pressable
-              onPress={() => navigateTo("Alerts")}
-              style={styles.iconButton}
-            >
-              <Feather name="bell" size={18} color={colors.ink[600]} />
+            <Pressable onPress={() => navigateTo("Alerts")} style={styles.iconButton}>
+              <Feather name="bell" size={17} color={colors.ink[500]} />
               {unreadCount > 0 ? (
                 <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+                  <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount > 9 ? "9+" : unreadCount}</Text>
                 </View>
               ) : null}
             </Pressable>
           ) : null}
-          <Pressable
-            onPress={() => navigateTo("TeacherProfile")}
-            style={styles.userChip}
-          >
+
+          <View style={styles.userChip}>
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>{initials}</Text>
             </View>
-            <Text style={styles.roleText}>{roleLabel}</Text>
-          </Pressable>
-          <Pressable onPress={() => void logout()} style={styles.iconButton}>
-            <Feather name="log-out" size={18} color={colors.ink[500]} />
-          </Pressable>
+            <Pressable onPress={() => void logout()} style={styles.logoutButton}>
+              <Feather name="log-out" size={14} color={colors.ink[400]} />
+            </Pressable>
+          </View>
         </View>
       </View>
-      <TeacherMenuSheet
+
+      <StudentParentMenuSheet
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
         onNavigate={navigateTo}
+        unreadCount={unreadCount}
       />
     </View>
   );
@@ -113,11 +98,11 @@ export default function TeacherTopbar() {
 
 const styles = StyleSheet.create({
   wrap: {
-    backgroundColor: colors.white,
+    backgroundColor: "rgba(255,255,255,0.97)",
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(226,232,240,0.7)",
-    paddingHorizontal: 18,
-    paddingBottom: 12,
+    borderBottomColor: "rgba(226,232,240,0.85)",
+    paddingHorizontal: 12,
+    paddingBottom: 10,
   },
   row: {
     flexDirection: "row",
@@ -128,23 +113,38 @@ const styles = StyleSheet.create({
   left: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    flex: 1,
+    width: 48,
+  },
+  center: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    top: 0,
+    bottom: 0,
   },
   right: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 8,
   },
   iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
-    backgroundColor: colors.white,
+    width: 36,
+    height: 36,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.ink[100],
+    borderColor: "rgba(226,232,240,0.9)",
+    backgroundColor: colors.white,
     alignItems: "center",
     justifyContent: "center",
+  },
+  erpLabel: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.ink[900],
+    fontFamily: typography.fontDisplay,
+    letterSpacing: -0.4,
   },
   badge: {
     position: "absolute",
@@ -152,59 +152,49 @@ const styles = StyleSheet.create({
     right: -4,
     minWidth: 16,
     height: 16,
-    borderRadius: 8,
+    borderRadius: 999,
     backgroundColor: colors.rose[500],
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 3,
   },
   badgeText: {
-    fontSize: 9,
     color: colors.white,
-    fontFamily: typography.fontBody,
+    fontSize: 8,
     fontWeight: "700",
-  },
-  title: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.ink[900],
-    fontFamily: typography.fontDisplay,
-  },
-  subtitle: {
-    fontSize: 12,
-    color: colors.ink[700],
     fontFamily: typography.fontBody,
-    fontWeight: "500",
   },
   userChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    gap: 6,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.ink[100],
+    borderColor: "rgba(226,232,240,0.9)",
     backgroundColor: colors.white,
+    paddingLeft: 2,
+    paddingRight: 4,
+    paddingVertical: 2,
   },
   avatar: {
-    width: 26,
-    height: 26,
-    borderRadius: 9,
+    width: 28,
+    height: 28,
+    borderRadius: 10,
     backgroundColor: colors.ink[900],
     alignItems: "center",
     justifyContent: "center",
   },
   avatarText: {
     color: colors.white,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
     fontFamily: typography.fontBody,
   },
-  roleText: {
-    fontSize: 10,
-    color: colors.ink[700],
-    fontFamily: typography.fontBody,
-    fontWeight: "700",
+  logoutButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

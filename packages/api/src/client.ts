@@ -1,9 +1,23 @@
 import axios, { AxiosError, AxiosInstance } from "axios";
 import "react-native-url-polyfill/auto";
+import Constants from "expo-constants";
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
 let unauthorizedHandler: (() => void) | null = null;
+
+type ExpoExtra = {
+  apiBaseUrl?: string;
+};
+
+function getExpoApiBaseUrl() {
+  const extra =
+    (Constants.expoConfig?.extra as ExpoExtra | undefined) ??
+    ((Constants as any).manifest2?.extra as ExpoExtra | undefined) ??
+    ((Constants as any).manifest?.extra as ExpoExtra | undefined);
+
+  return extra?.apiBaseUrl;
+}
 
 export function setAuthTokens(next: { accessToken?: string | null; refreshToken?: string | null }) {
   if (typeof next.accessToken !== "undefined") accessToken = next.accessToken;
@@ -25,7 +39,8 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
 
 export const API_BASE_URL =
   (process.env.EXPO_PUBLIC_API_BASE_URL as string | undefined) ??
-  "http://localhost:3000/api/v1";
+  getExpoApiBaseUrl() ??
+  "https://api.kangleicareersolution.co.in/api/v1"; // 🔥 NO localhost anymore
 
 export const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
 
@@ -90,9 +105,8 @@ api.interceptors.response.use(
 
     const requestUrl = originalRequest.url ?? "";
     const isAuthEndpoint = requestUrl.includes("/auth/");
-    const isFileEndpoint = requestUrl.includes("/files/secure");
 
-    if (error.response?.status !== 401 || isAuthEndpoint || isFileEndpoint) {
+    if (error.response?.status !== 401 || isAuthEndpoint) {
       return Promise.reject(error);
     }
 

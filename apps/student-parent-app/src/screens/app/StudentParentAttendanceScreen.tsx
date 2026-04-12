@@ -1,46 +1,61 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import React, { useMemo, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { getParentDashboard, getStudentDashboard, listStudentAttendance } from "@saiyonix/api";
 import { useAuth } from "@saiyonix/auth";
 import { Button, Card, EmptyState, ErrorState, LoadingState, PageHeader, StatCard, colors, typography } from "@saiyonix/ui";
-import { formatPercentage } from "@saiyonix/utils";
 import { useActiveStudent } from "../../hooks/useActiveStudent";
+import AppDatePicker from "../../components/AppDatePicker";
+import StudentSelector from "../../components/StudentSelector";
+
+function toIsoDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDate(value: string) {
+  return value ? new Date(value).toLocaleDateString("en-IN") : "Select date";
+}
 
 export default function StudentParentAttendanceScreen() {
   const { role } = useAuth();
-  const { activeStudent, parentStudents } = useActiveStudent();
-  const [studentId, setStudentId] = useState<string | null>(null);
+  const { activeStudent, activeStudentId, parentStudents, setActiveStudentId } = useActiveStudent();
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [pickerField, setPickerField] = useState<"from" | "to" | null>(null);
 
-  const query = useQuery({
+  const query = useQuery<any>({
     queryKey: ["attendance", role],
-    queryFn: role === "PARENT" ? getParentDashboard : getStudentDashboard,
+    queryFn: async () => (role === "PARENT" ? getParentDashboard() : getStudentDashboard()),
   });
 
   const recordsQuery = useQuery({
-    queryKey: ["attendance", "records", studentId, fromDate, toDate],
+    queryKey: ["attendance", "records", activeStudentId, fromDate, toDate],
     queryFn: () =>
       listStudentAttendance({
-        studentId: studentId ?? undefined,
+        studentId: activeStudentId ?? undefined,
         fromDate: fromDate || undefined,
         toDate: toDate || undefined,
       }),
-    enabled: Boolean(studentId),
+    enabled: Boolean(activeStudentId),
   });
-
-  useEffect(() => {
-    if (!studentId && activeStudent?.id) setStudentId(activeStudent.id);
-  }, [activeStudent?.id, studentId]);
 
   const summary =
     role === "PARENT"
-      ? query.data?.children?.find((child: any) => child.studentId === studentId)?.attendanceSummary ??
+      ? query.data?.children?.find((child: any) => child.studentId === activeStudentId)?.attendanceSummary ??
         query.data?.children?.[0]?.attendanceSummary
       : query.data?.attendanceSummary;
 
   const records = useMemo(() => recordsQuery.data?.data ?? recordsQuery.data ?? [], [recordsQuery.data]);
+  const totalDays = useMemo(
+    () =>
+      (summary?.presentDays ?? 0) +
+      (summary?.absentDays ?? 0) +
+      (summary?.lateDays ?? 0) +
+      (summary?.halfDays ?? 0),
+    [summary]
+  );
+  const presentPct = totalDays ? Math.round(((summary?.presentDays ?? 0) / totalDays) * 100) : 0;
+  const absentPct = totalDays ? Math.round(((summary?.absentDays ?? 0) / totalDays) * 100) : 0;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -55,44 +70,25 @@ export default function StudentParentAttendanceScreen() {
       {summary ? (
         <>
           <View style={styles.statsRow}>
-            <StatCard label="Attendance %" value={formatPercentage(summary.attendancePercentage)} color="jade" />
-            <StatCard label="Present Days" value={String(summary.presentDays ?? 0)} color="sky" />
-            <StatCard label="Absent Days" value={String(summary.absentDays ?? 0)} color="sunrise" />
+            <StatCard label="Present %" value={`${presentPct}%`} color="jade" />
+            <StatCard label="Absent %" value={`${absentPct}%`} color="sunrise" />
+            <StatCard label="Total Days" value={String(totalDays)} color="sky" />
           </View>
 
           <Card title="Attendance Records" subtitle="Filter by date range">
             {role === "PARENT" && parentStudents.length ? (
-              <View style={styles.childRow}>
-                {parentStudents.map((child) => (
-                  <Text
-                    key={child.id}
-                    style={[styles.childChip, studentId === child.id && styles.childChipActive]}
-                    onPress={() => setStudentId(child.id)}
-                  >
-                    {child.fullName ?? "Student"}
-                  </Text>
-                ))}
-              </View>
+              <StudentSelector students={parentStudents} activeId={activeStudentId} onSelect={setActiveStudentId} />
             ) : null}
+
             <View style={styles.filterRow}>
-              <View style={styles.filterField}>
+              <Pressable style={styles.dateField} onPress={() => setPickerField("from")}>
                 <Text style={styles.metaLabel}>From</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="YYYY-MM-DD"
-                  value={fromDate}
-                  onChangeText={setFromDate}
-                />
-              </View>
-              <View style={styles.filterField}>
+                <Text style={styles.dateValue}>{fromDate ? formatDate(fromDate) : "Select date"}</Text>
+              </Pressable>
+              <Pressable style={styles.dateField} onPress={() => setPickerField("to")}>
                 <Text style={styles.metaLabel}>To</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="YYYY-MM-DD"
-                  value={toDate}
-                  onChangeText={setToDate}
-                />
-              </View>
+                <Text style={styles.dateValue}>{toDate ? formatDate(toDate) : "Select date"}</Text>
+              </Pressable>
               <Button title="Apply" size="sm" onPress={() => recordsQuery.refetch()} />
             </View>
 
@@ -117,6 +113,19 @@ export default function StudentParentAttendanceScreen() {
       ) : (
         <EmptyState title="No attendance data" subtitle="Check back after attendance is marked." />
       )}
+
+      <AppDatePicker
+        visible={pickerField !== null}
+        title={pickerField === "from" ? "Select From Date" : "Select To Date"}
+        value={pickerField === "from" ? fromDate : pickerField === "to" ? toDate : undefined}
+        onCancel={() => setPickerField(null)}
+        onConfirm={(selectedDate) => {
+          const iso = toIsoDate(selectedDate);
+          if (pickerField === "from") setFromDate(iso);
+          if (pickerField === "to") setToDate(iso);
+          setPickerField(null);
+        }}
+      />
     </ScrollView>
   );
 }
@@ -130,70 +139,53 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   statsRow: {
-    flexDirection: "row",
     gap: 12,
-  },
-  childRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 12,
-  },
-  childChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: colors.ink[100],
-    fontSize: 12,
-    color: colors.ink[600],
-    fontFamily: typography.fontBody,
-  },
-  childChipActive: {
-    backgroundColor: colors.sky[100],
-    color: colors.sky[700],
   },
   filterRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 10,
     alignItems: "flex-end",
   },
-  filterField: {
+  dateField: {
     flex: 1,
+    minWidth: 140,
+    borderWidth: 1,
+    borderColor: colors.ink[200],
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.white,
     gap: 4,
   },
   metaLabel: {
     fontSize: 10,
     textTransform: "uppercase",
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
     color: colors.ink[400],
     fontFamily: typography.fontBody,
+    fontWeight: "700",
   },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.ink[200],
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+  dateValue: {
     fontSize: 12,
-    fontFamily: typography.fontBody,
     color: colors.ink[800],
-    backgroundColor: colors.white,
+    fontFamily: typography.fontBody,
+    fontWeight: "600",
   },
   list: {
     marginTop: 12,
     gap: 10,
   },
   listItem: {
-    padding: 10,
-    borderRadius: 12,
+    padding: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.ink[100],
     backgroundColor: colors.white,
   },
   listTitle: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
     color: colors.ink[700],
     fontFamily: typography.fontBody,
   },

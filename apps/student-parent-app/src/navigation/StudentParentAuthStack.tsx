@@ -11,7 +11,7 @@ const Stack = createNativeStackNavigator<StudentParentAuthStackParamList>();
 
 export default function StudentParentAuthStack() {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator screenOptions={{ headerShown: false, animation: "fade" }}>
       <Stack.Screen name="OtpLogin" component={OtpLoginScreen} />
     </Stack.Navigator>
   );

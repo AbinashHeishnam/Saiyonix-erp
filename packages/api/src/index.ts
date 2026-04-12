@@ -9,6 +9,7 @@ export * from "./fees";
 export * from "./payments";
 export * from "./results";
 export * from "./reportCards";
+export * from "./admitCards";
 export * from "./idCards";
 export * from "./profiles";
 export {
@@ -29,3 +30,6 @@ export * from "./academicYears";
 export * from "./teacherAssignments";
 export * from "./sections";
 export * from "./upload";
+export * from "./classTeacher";
+export * from "./students";
+export * from "./ranking";

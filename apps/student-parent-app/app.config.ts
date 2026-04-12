@@ -14,6 +14,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     backgroundColor: "#1e223c",
   },
   extra: {
-    apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api/v1",
+    apiBaseUrl:
+      process.env.EXPO_PUBLIC_API_BASE_URL ??
+      "https://api.kangleicareersolution.co.in/api/v1",
   },
 });

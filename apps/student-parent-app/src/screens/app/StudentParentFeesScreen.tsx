@@ -1,27 +1,30 @@
 import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useNavigation } from "@react-navigation/native";
 import { useQuery } from "@tanstack/react-query";
 import { getStudentFeeStatus, listReceipts, listExamRegistrations } from "@saiyonix/api";
 import { Button, Card, EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge, colors, typography } from "@saiyonix/ui";
 import { formatDate } from "@saiyonix/utils";
 import { useActiveStudent } from "../../hooks/useActiveStudent";
+import StudentSelector from "../../components/StudentSelector";
 
 export default function StudentParentFeesScreen() {
-  const { activeStudent } = useActiveStudent();
+  const navigation = useNavigation();
+  const { activeStudentId, parentStudents, setActiveStudentId } = useActiveStudent();
   const feeQuery = useQuery({
-    queryKey: ["fees", activeStudent?.id],
-    queryFn: () => getStudentFeeStatus(activeStudent?.id ?? ""),
-    enabled: Boolean(activeStudent?.id),
+    queryKey: ["fees", activeStudentId],
+    queryFn: () => getStudentFeeStatus(activeStudentId ?? ""),
+    enabled: Boolean(activeStudentId),
   });
   const receiptsQuery = useQuery({
-    queryKey: ["fees", "receipts", activeStudent?.id],
-    queryFn: () => listReceipts({ studentId: activeStudent?.id }),
-    enabled: Boolean(activeStudent?.id),
+    queryKey: ["fees", "receipts", activeStudentId],
+    queryFn: () => listReceipts({ studentId: activeStudentId ?? undefined }),
+    enabled: Boolean(activeStudentId),
   });
   const registrationQuery = useQuery({
-    queryKey: ["exam", "registrations", activeStudent?.id],
-    queryFn: () => listExamRegistrations(activeStudent?.id ?? undefined),
-    enabled: Boolean(activeStudent?.id),
+    queryKey: ["exam", "registrations", activeStudentId],
+    queryFn: () => listExamRegistrations(activeStudentId ?? undefined),
+    enabled: Boolean(activeStudentId),
   });
 
   const status = feeQuery.data?.status ?? "NOT_PUBLISHED";
@@ -34,11 +37,17 @@ export default function StudentParentFeesScreen() {
         subtitle="Track your payments, eligibility, and quick actions for exams."
         actions={
           <View style={styles.actionsRow}>
-            <Button title="Register for Exam" variant="secondary" size="sm" disabled={status !== "PAID"} />
-            <Button title="Pay Now" size="sm" disabled={status === "NOT_PUBLISHED"} />
+            <Button title="Register for Exam" variant="secondary" size="sm" disabled={status !== "PAID"} onPress={() => navigation.navigate("ExamRegistration" as never)} />
+            <Button title="Pay Now" size="sm" disabled={status === "NOT_PUBLISHED"} onPress={() => navigation.navigate("Payment" as never)} />
           </View>
         }
       />
+
+      {parentStudents.length > 1 ? (
+        <Card title="Student" subtitle="Select a child to view fees">
+          <StudentSelector students={parentStudents} activeId={activeStudentId} onSelect={setActiveStudentId} />
+        </Card>
+      ) : null}
 
       {feeQuery.isLoading || receiptsQuery.isLoading ? <LoadingState /> : null}
       {feeQuery.error || receiptsQuery.error ? <ErrorState message="Unable to load fee details." /> : null}
@@ -94,7 +103,7 @@ export default function StudentParentFeesScreen() {
                     : "Complete payment to unlock exam registration and admit cards."}
               </Text>
             </View>
-            <Button title={status === "PAID" ? "Pay Again" : "Pay Now"} variant={status === "PAID" ? "secondary" : "primary"} />
+            <Button title={status === "PAID" ? "Pay Again" : "Pay Now"} variant={status === "PAID" ? "secondary" : "primary"} onPress={() => navigation.navigate("Payment" as never)} />
           </Card>
         </>
       ) : (
@@ -106,8 +115,16 @@ export default function StudentParentFeesScreen() {
           <View style={styles.list}>
             {receiptsQuery.data.map((receipt: any) => (
               <View key={receipt.id} style={styles.listItem}>
-                <Text style={styles.title}>Receipt #{receipt.paymentId ?? receipt.id}</Text>
-                <Text style={styles.meta}>Paid: {receipt.paidAt ? formatDate(receipt.paidAt) : "—"}</Text>
+                <View>
+                  <Text style={styles.title}>Receipt #{receipt.paymentId ?? receipt.id}</Text>
+                  <Text style={styles.meta}>Paid: {receipt.paidAt ? formatDate(receipt.paidAt) : "—"}</Text>
+                </View>
+                <Button
+                  title="View"
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => navigation.navigate("Receipt" as never, { paymentId: receipt.paymentId ?? receipt.id } as never)}
+                />
               </View>
             ))}
           </View>

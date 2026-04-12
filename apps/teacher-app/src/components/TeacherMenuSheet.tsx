@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
   logoText: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.ink[500],
+    color: colors.ink[700],
     fontFamily: typography.fontDisplay,
   },
   logoImage: {
@@ -217,8 +217,9 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 1.2,
     textTransform: "uppercase",
-    color: colors.ink[400],
+    color: colors.ink[600],
     fontFamily: typography.fontBody,
+    fontWeight: "600",
   },
   closeButton: {
     width: 34,
@@ -242,7 +243,7 @@ const styles = StyleSheet.create({
   groupTitle: {
     fontSize: 10,
     letterSpacing: 1.6,
-    color: colors.ink[400],
+    color: colors.ink[600],
     fontFamily: typography.fontBody,
     fontWeight: "700",
   },
@@ -272,8 +273,8 @@ const styles = StyleSheet.create({
   },
   itemLabel: {
     fontSize: 13,
-    fontWeight: "600",
-    color: colors.ink[700],
+    fontWeight: "700",
+    color: colors.ink[800],
     fontFamily: typography.fontBody,
   },
 });

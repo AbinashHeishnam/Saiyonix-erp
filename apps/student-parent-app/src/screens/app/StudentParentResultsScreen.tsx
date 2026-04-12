@@ -4,9 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { getResults, listExams } from "@saiyonix/api";
 import { Button, Card, EmptyState, ErrorState, LoadingState, PageHeader, colors, typography } from "@saiyonix/ui";
 import { useActiveStudent } from "../../hooks/useActiveStudent";
+import StudentSelector from "../../components/StudentSelector";
 
 export default function StudentParentResultsScreen() {
-  const { activeStudent } = useActiveStudent();
+  const { activeStudentId, parentStudents, setActiveStudentId } = useActiveStudent();
   const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
 
   const examsQuery = useQuery({
@@ -15,8 +16,8 @@ export default function StudentParentResultsScreen() {
   });
 
   const resultsQuery = useQuery({
-    queryKey: ["results", "detail", selectedExamId, activeStudent?.id],
-    queryFn: () => getResults(selectedExamId as string, activeStudent?.id),
+    queryKey: ["results", "detail", selectedExamId, activeStudentId],
+    queryFn: () => getResults(selectedExamId as string, activeStudentId ?? undefined),
     enabled: Boolean(selectedExamId),
   });
 
@@ -25,6 +26,12 @@ export default function StudentParentResultsScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <PageHeader title="Results" subtitle="Exam results and report cards" />
+
+      {parentStudents.length > 1 ? (
+        <Card title="Student" subtitle="Select a child to view results">
+          <StudentSelector students={parentStudents} activeId={activeStudentId} onSelect={setActiveStudentId} />
+        </Card>
+      ) : null}
 
       {examsQuery.isLoading ? <LoadingState /> : null}
       {examsQuery.error ? <ErrorState message="Unable to load results." /> : null}

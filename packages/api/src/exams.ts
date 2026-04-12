@@ -28,6 +28,13 @@ export async function listExamRegistrations(studentId?: string) {
   return (res.data?.data ?? res.data) as ExamRegistrationSummary[];
 }
 
+export async function getStudentExamRoutine(studentId?: string) {
+  const res = await api.get("/exam/student/me", {
+    params: studentId ? { studentId } : undefined,
+  });
+  return res.data?.data ?? res.data;
+}
+
 export type ExamListResponse = {
   data?: Exam[];
   meta?: { page?: number; limit?: number; total?: number };

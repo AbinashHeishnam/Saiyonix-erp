@@ -1,0 +1,729 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import * as DocumentPicker from "expo-document-picker";
+import { io, Socket } from "socket.io-client";
+import { useQuery } from "@tanstack/react-query";
+import {
+  API_ORIGIN,
+  getAuthTokens,
+  getClassroomChatRoomMessages,
+  getStudentClassroom,
+  getSubjectClassroom,
+  submitAssignment,
+  uploadFile,
+} from "@saiyonix/api";
+import { useAuth } from "@saiyonix/auth";
+import { Button, Card, EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge, colors, typography } from "@saiyonix/ui";
+import StudentSelector from "../../components/StudentSelector";
+import { useActiveStudent } from "../../hooks/useActiveStudent";
+import { openFileUrl, toUploadFile } from "../../utils/files";
+
+function getFileName(url?: string | null) {
+  if (!url) return null;
+  const clean = url.split("?")[0]?.split("#")[0] ?? url;
+  const name = clean.split("/").pop() ?? "";
+  return decodeURIComponent(name) || null;
+}
+
+function getFileIcon(url?: string | null) {
+  if (!url) return null;
+  const ext = url.split("?")[0]?.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "pdf") return "📄";
+  if (["jpg", "jpeg", "png"].includes(ext)) return "🖼";
+  return "📎";
+}
+
+export default function StudentParentClassroomScreen() {
+  const { role, user } = useAuth();
+  const { activeStudentId, parentStudents, setActiveStudentId } = useActiveStudent();
+  const socketRef = useRef<Socket | null>(null);
+
+  const [selected, setSelected] = useState<any | null>(null);
+  const [activeTab, setActiveTab] = useState<"stream" | "assignments" | "notes">("stream");
+  const [submissionOpen, setSubmissionOpen] = useState(false);
+  const [submissionFile, setSubmissionFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
+  const [submissionSaving, setSubmissionSaving] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [selectedAssignment, setSelectedAssignment] = useState<any | null>(null);
+  const [selectedNote, setSelectedNote] = useState<any | null>(null);
+
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatText, setChatText] = useState("");
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [chatError, setChatError] = useState<string | null>(null);
+
+  const query = useQuery({
+    queryKey: ["classroom", "student", activeStudentId, role],
+    queryFn: () => getStudentClassroom(role === "PARENT" ? activeStudentId ?? undefined : undefined),
+    enabled: role !== "PARENT" || Boolean(activeStudentId),
+  });
+
+  const items = useMemo(() => {
+    const payload = query.data ?? [];
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.items)) return payload.items;
+    if (Array.isArray(payload?.subjects)) return payload.subjects;
+    return [] as any[];
+  }, [query.data]);
+
+  useEffect(() => {
+    if (!selected && items.length) {
+      setSelected(items[0]);
+    }
+  }, [items, selected]);
+
+  useEffect(() => {
+    setSelected(null);
+  }, [activeStudentId]);
+
+  useEffect(() => {
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, []);
+
+  const subjectQuery = useQuery({
+    queryKey: ["classroom", "subject", selected?.classSubjectId, activeStudentId],
+    queryFn: () => getSubjectClassroom(selected?.classSubjectId ?? "", role === "PARENT" ? activeStudentId ?? undefined : undefined),
+    enabled: Boolean(selected?.classSubjectId),
+  });
+
+  const subjectDetail = subjectQuery.data ?? null;
+  const announcements = subjectDetail?.announcements ?? [];
+  const notes = subjectDetail?.notes ?? [];
+  const assignments = subjectDetail?.assignments ?? [];
+
+  const streamItems = useMemo(() => {
+    const mappedAssignments = assignments.map((assignment: any) => ({
+      id: assignment.id,
+      type: "assignment",
+      title: assignment.title,
+      description: assignment.description,
+      createdAt: assignment.createdAt ?? assignment.dueAt ?? null,
+      dueAt: assignment.dueAt ?? null,
+      attachments: Array.isArray(assignment.attachments) ? assignment.attachments : [],
+      submissionStatus: assignment.submissionStatus ?? null,
+    }));
+    const mappedNotes = notes.map((note: any) => ({
+      id: note.id,
+      type: "note",
+      title: note.title,
+      description: note.description,
+      createdAt: note.createdAt ?? null,
+      attachments: Array.isArray(note.attachments) ? note.attachments : [],
+    }));
+    const mappedAnnouncements = announcements.map((announcement: any) => ({
+      id: announcement.id,
+      type: "announcement",
+      title: announcement.title,
+      description: announcement.content,
+      createdAt: announcement.createdAt ?? null,
+      attachments: Array.isArray(announcement.attachments) ? announcement.attachments : [],
+    }));
+    return [...mappedAnnouncements, ...mappedAssignments, ...mappedNotes].sort((a, b) => {
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bTime - aTime;
+    });
+  }, [assignments, notes, announcements]);
+
+  const ensureSocket = () => {
+    if (socketRef.current) return socketRef.current;
+    const tokens = getAuthTokens();
+    const socket = io(API_ORIGIN, {
+      transports: ["websocket"],
+      auth: { token: tokens.accessToken },
+    });
+    socketRef.current = socket;
+    return socket;
+  };
+
+  const openChat = async () => {
+    const roomId = subjectDetail?.chatRoomId ?? subjectDetail?.chatRoom?.id;
+    if (!roomId) {
+      setChatError("Chat room not available yet.");
+      setChatOpen(true);
+      return;
+    }
+    setChatError(null);
+    setChatOpen(true);
+    try {
+      const payload = await getClassroomChatRoomMessages(roomId, { limit: 50 });
+      setChatMessages(payload?.messages ?? payload ?? []);
+    } catch (err: any) {
+      setChatError(err?.response?.data?.message ?? "Unable to load chat.");
+    }
+    const socket = ensureSocket();
+    socket.emit("join_room", roomId);
+    socket.off("receive_message");
+    socket.on("receive_message", (msg: any) => {
+      setChatMessages((prev) => [...prev, msg]);
+    });
+  };
+
+  const handleSendChat = () => {
+    const roomId = subjectDetail?.chatRoomId ?? subjectDetail?.chatRoom?.id;
+    if (!roomId || !chatText.trim()) return;
+    const socket = ensureSocket();
+    socket.emit("send_message", { roomId, message: chatText.trim(), clientId: `${Date.now()}` });
+    setChatText("");
+  };
+
+  const handlePickSubmission = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["application/pdf", "image/*", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (result.canceled) return;
+    setSubmissionFile(result.assets?.[0] ?? null);
+  };
+
+  const handleSubmitAssignment = async () => {
+    if (!selectedAssignment || !submissionFile) {
+      setSubmissionError("Please attach your assignment file.");
+      return;
+    }
+    setSubmissionError(null);
+    setSubmissionSaving(true);
+    try {
+      const upload = await uploadFile({
+        file: toUploadFile(submissionFile),
+        userType: "student",
+        userId: user?.id ?? undefined,
+        module: "assignment-submissions",
+      });
+      const fileUrl = upload?.fileUrl ?? upload?.url ?? upload?.path;
+      if (!fileUrl) {
+        throw new Error("Upload failed. Please try again.");
+      }
+      await submitAssignment({
+        assignmentId: selectedAssignment.id,
+        submissionUrl: fileUrl,
+        studentId: role === "PARENT" ? activeStudentId ?? undefined : undefined,
+      });
+      setSubmissionFile(null);
+      setSubmissionOpen(false);
+      await subjectQuery.refetch();
+    } catch (err: any) {
+      setSubmissionError(err?.response?.data?.message ?? err?.message ?? "Failed to submit assignment.");
+    } finally {
+      setSubmissionSaving(false);
+    }
+  };
+
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <PageHeader title="Classroom" subtitle="Assignments, notes, and announcements" />
+
+      {role === "PARENT" && parentStudents.length > 1 ? (
+        <Card title="Student" subtitle="Select a child to view classroom">
+          <StudentSelector students={parentStudents} activeId={activeStudentId} onSelect={setActiveStudentId} />
+        </Card>
+      ) : null}
+
+      {query.isLoading ? <LoadingState label="Loading classroom" /> : null}
+      {query.error ? <ErrorState message="Unable to load classroom." /> : null}
+
+      <Card title="Subjects" subtitle="Select a class subject">
+        {items.length ? (
+          <View style={styles.subjectList}>
+            {items.map((item: any, index: number) => {
+              const isActive = selected?.classSubjectId === item.classSubjectId;
+              return (
+                <Pressable key={`${item.classSubjectId ?? item.subjectId ?? item.subjectName ?? index}`} onPress={() => setSelected(item)}>
+                  {({ pressed }) => (
+                    <LinearGradient
+                      colors={isActive ? ["#0ea5e9", "#2563eb"] : ["#f8fafc", "#f1f5f9"]}
+                      style={[styles.subjectCard, isActive && styles.subjectCardActive, pressed && styles.pressedCard]}
+                    >
+                      <Text style={[styles.subjectTitle, isActive && styles.subjectTitleActive]}>
+                        {item.subjectName ?? "Subject"}
+                      </Text>
+                      <Text style={[styles.subjectMeta, isActive && styles.subjectMetaActive]}>
+                        {item.className ?? "Class"} {item.sectionName ?? ""}
+                      </Text>
+                      {item.teacherName ? (
+                        <Text style={[styles.subjectMeta, isActive && styles.subjectMetaActive]}>
+                          {item.teacherName}
+                        </Text>
+                      ) : null}
+                    </LinearGradient>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <EmptyState title="No classroom mapped" subtitle="Ask the school to map your subjects." />
+        )}
+      </Card>
+
+      {selected ? (
+        <Card title="Classroom Stream" subtitle={selected.subjectName ?? "Updates"}>
+          <View style={styles.tabRow}>
+            {(["stream", "assignments", "notes"] as const).map((tab) => (
+              <Pressable
+                key={tab}
+                onPress={() => setActiveTab(tab)}
+                style={[styles.tabChip, activeTab === tab && styles.tabChipActive]}
+              >
+                <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
+                  {tab === "stream" ? "Stream" : tab === "assignments" ? "Assignments" : "Notes"}
+                </Text>
+              </Pressable>
+            ))}
+            <Pressable onPress={openChat} style={styles.chatButton}>
+              <Text style={styles.chatButtonText}>Open Chat</Text>
+            </Pressable>
+          </View>
+
+          {subjectQuery.isLoading ? (
+            <LoadingState label="Loading classroom updates" />
+          ) : subjectQuery.error ? (
+            <Text style={styles.meta}>Unable to load classroom details.</Text>
+          ) : activeTab === "stream" ? (
+            streamItems.length ? (
+              <View style={styles.streamList}>
+                {streamItems.map((item: any) => (
+                  <View key={`${item.type}-${item.id}`} style={styles.streamCard}>
+                    <View style={styles.streamHeader}>
+                      <Text style={styles.streamTitle}>{item.title ?? "Untitled"}</Text>
+                      <StatusBadge
+                        variant={item.type === "assignment" ? "warning" : item.type === "note" ? "info" : "neutral"}
+                        label={item.type}
+                        dot={false}
+                      />
+                    </View>
+                    {item.description ? <Text style={styles.meta}>{item.description}</Text> : null}
+                    {item.dueAt ? <Text style={styles.meta}>Due: {new Date(item.dueAt).toLocaleString()}</Text> : null}
+                    {item.submissionStatus ? (
+                      <Text style={styles.meta}>Submission: {item.submissionStatus}</Text>
+                    ) : null}
+                    {Array.isArray(item.attachments) && item.attachments.length ? (
+                      <View style={styles.attachments}>
+                        {item.attachments.map((file: any, idx: number) => (
+                          <Pressable
+                            key={`${item.id}-${file.fileUrl ?? file}-${idx}`}
+                            onPress={() => openFileUrl(file.fileUrl ?? file)}
+                          >
+                            {({ pressed }) => (
+                              <View style={[styles.attachmentChip, pressed && styles.pressedChip]}>
+                                <Text style={styles.attachmentText}>{getFileIcon(file.fileUrl ?? file)} {getFileName(file.fileUrl ?? file) ?? "Attachment"}</Text>
+                              </View>
+                            )}
+                          </Pressable>
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <EmptyState title="No updates" subtitle="Classroom updates will appear here." />
+            )
+          ) : activeTab === "assignments" ? (
+            assignments.length ? (
+              <View style={styles.streamList}>
+                {assignments.map((assignment: any) => (
+                  <View key={assignment.id} style={styles.streamCard}>
+                    <Text style={styles.streamTitle}>{assignment.title ?? "Assignment"}</Text>
+                    {assignment.description ? <Text style={styles.meta}>{assignment.description}</Text> : null}
+                    <Text style={styles.meta}>Due: {assignment.dueAt ? new Date(assignment.dueAt).toLocaleString() : "—"}</Text>
+                    {assignment.submissionStatus ? (
+                      <Text style={styles.meta}>Submission: {assignment.submissionStatus}</Text>
+                    ) : null}
+                    {Array.isArray(assignment.attachments) && assignment.attachments.length ? (
+                      <View style={styles.attachments}>
+                        {assignment.attachments.map((file: any, idx: number) => (
+                          <Pressable
+                            key={`${assignment.id}-${file.fileUrl ?? file}-${idx}`}
+                            onPress={() => openFileUrl(file.fileUrl ?? file)}
+                          >
+                            {({ pressed }) => (
+                              <View style={[styles.attachmentChip, pressed && styles.pressedChip]}>
+                                <Text style={styles.attachmentText}>{getFileIcon(file.fileUrl ?? file)} {getFileName(file.fileUrl ?? file) ?? "Attachment"}</Text>
+                              </View>
+                            )}
+                          </Pressable>
+                        ))}
+                      </View>
+                    ) : null}
+                    <Button
+                      title="Submit Assignment"
+                      size="sm"
+                      variant="secondary"
+                      onPress={() => {
+                        setSelectedAssignment(assignment);
+                        setSubmissionOpen(true);
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <EmptyState title="No assignments" subtitle="Assignments will appear here." />
+            )
+          ) : notes.length ? (
+            <View style={styles.streamList}>
+              {notes.map((note: any) => (
+                <Pressable key={note.id} onPress={() => setSelectedNote(note)}>
+                  {({ pressed }) => (
+                    <View style={[styles.streamCard, pressed && styles.pressedCard]}>
+                      <Text style={styles.streamTitle}>{note.title ?? "Note"}</Text>
+                      {note.description ? <Text style={styles.meta}>{note.description}</Text> : null}
+                      {Array.isArray(note.attachments) && note.attachments.length ? (
+                        <View style={styles.attachments}>
+                          {note.attachments.map((file: any, idx: number) => (
+                            <Pressable
+                              key={`${note.id}-${file.fileUrl ?? file}-${idx}`}
+                              onPress={() => openFileUrl(file.fileUrl ?? file)}
+                            >
+                              {({ pressed: attachmentPressed }) => (
+                                <View style={[styles.attachmentChip, attachmentPressed && styles.pressedChip]}>
+                                  <Text style={styles.attachmentText}>{getFileIcon(file.fileUrl ?? file)} {getFileName(file.fileUrl ?? file) ?? "Attachment"}</Text>
+                                </View>
+                              )}
+                            </Pressable>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <EmptyState title="No notes" subtitle="Notes will appear here." />
+          )}
+        </Card>
+      ) : null}
+
+      <Modal visible={submissionOpen} transparent animationType="fade" onRequestClose={() => setSubmissionOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Submit Assignment</Text>
+            <Text style={styles.meta}>{selectedAssignment?.title ?? "Assignment"}</Text>
+            <Button title={submissionFile ? "Change File" : "Upload File"} variant="secondary" onPress={handlePickSubmission} />
+            {submissionFile ? <Text style={styles.meta}>Selected: {submissionFile.name ?? "File"}</Text> : null}
+            {submissionError ? <Text style={styles.errorText}>{submissionError}</Text> : null}
+            <Button title={submissionSaving ? "Submitting..." : "Submit"} onPress={handleSubmitAssignment} loading={submissionSaving} />
+            <Button title="Close" variant="ghost" onPress={() => setSubmissionOpen(false)} />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={chatOpen} transparent animationType="fade" onRequestClose={() => setChatOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.chatModal}>
+            <View style={styles.chatHeader}>
+              <Text style={styles.modalTitle}>Classroom Chat</Text>
+              <Pressable onPress={() => setChatOpen(false)}>
+                <Text style={styles.chatClose}>Close</Text>
+              </Pressable>
+            </View>
+            {chatError ? <Text style={styles.errorText}>{chatError}</Text> : null}
+            <ScrollView style={styles.chatList} contentContainerStyle={{ gap: 10 }}>
+              {chatMessages.length ? (
+                chatMessages.map((msg: any, idx: number) => {
+                  const isMine = msg.senderId === user?.id || msg.senderUserId === user?.id;
+                  return (
+                    <View key={`${msg.id ?? idx}`} style={[styles.chatRow, isMine ? styles.chatRowMine : styles.chatRowOther]}>
+                      <View style={[styles.chatBubble, isMine ? styles.chatBubbleMine : styles.chatBubbleOther]}>
+                        <Text style={[styles.chatText, isMine ? styles.chatTextMine : styles.chatTextOther]}>
+                          {msg.message ?? msg.messageText ?? ""}
+                        </Text>
+                        <Text style={styles.chatTime}>{new Date(msg.createdAt ?? msg.sentAt).toLocaleString()}</Text>
+                      </View>
+                    </View>
+                  );
+                })
+              ) : (
+                <Text style={styles.meta}>No messages yet.</Text>
+              )}
+            </ScrollView>
+            <View style={styles.chatInputRow}>
+              <TextInput
+                style={styles.chatInput}
+                placeholder="Type a message"
+                value={chatText}
+                onChangeText={setChatText}
+              />
+              <Button title="Send" size="sm" onPress={handleSendChat} disabled={!chatText.trim()} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={Boolean(selectedNote)} transparent animationType="fade" onRequestClose={() => setSelectedNote(null)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            {selectedNote ? (
+              <>
+                <Text style={styles.modalTitle}>{selectedNote.title ?? "Note"}</Text>
+                <Text style={styles.meta}>{selectedNote.description ?? "No description available."}</Text>
+                {Array.isArray(selectedNote.attachments) && selectedNote.attachments.length ? (
+                  <View style={styles.attachments}>
+                    {selectedNote.attachments.map((file: any, idx: number) => (
+                      <Pressable
+                        key={`${selectedNote.id}-${file.fileUrl ?? file}-${idx}`}
+                        onPress={() => openFileUrl(file.fileUrl ?? file)}
+                      >
+                        {({ pressed }) => (
+                          <View style={[styles.attachmentChip, pressed && styles.pressedChip]}>
+                            <Text style={styles.attachmentText}>{getFileIcon(file.fileUrl ?? file)} {getFileName(file.fileUrl ?? file) ?? "Attachment"}</Text>
+                          </View>
+                        )}
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+                <Button title="Close" variant="ghost" onPress={() => setSelectedNote(null)} />
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    backgroundColor: colors.ink[50],
+  },
+  content: {
+    padding: 20,
+    gap: 16,
+  },
+  subjectList: {
+    gap: 12,
+    marginTop: 12,
+  },
+  subjectCard: {
+    padding: 14,
+    borderRadius: 16,
+  },
+  subjectCardActive: {
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  subjectTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.ink[800],
+    fontFamily: typography.fontDisplay,
+  },
+  subjectTitleActive: {
+    color: colors.white,
+  },
+  subjectMeta: {
+    fontSize: 11,
+    color: colors.ink[500],
+    fontFamily: typography.fontBody,
+  },
+  subjectMetaActive: {
+    color: "rgba(255,255,255,0.8)",
+  },
+  tabRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  tabChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.ink[100],
+    backgroundColor: colors.white,
+  },
+  tabChipActive: {
+    borderColor: colors.sky[300],
+    backgroundColor: colors.sky[50],
+  },
+  tabText: {
+    fontSize: 11,
+    color: colors.ink[500],
+    fontFamily: typography.fontBody,
+  },
+  tabTextActive: {
+    color: colors.sky[700],
+    fontWeight: "700",
+  },
+  chatButton: {
+    marginLeft: "auto",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.ink[900],
+  },
+  chatButtonText: {
+    fontSize: 11,
+    color: colors.white,
+    fontFamily: typography.fontBody,
+    fontWeight: "700",
+  },
+  streamList: {
+    marginTop: 12,
+    gap: 12,
+  },
+  streamCard: {
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.ink[100],
+    backgroundColor: colors.white,
+    gap: 6,
+  },
+  streamHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  streamTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.ink[700],
+    fontFamily: typography.fontBody,
+  },
+  meta: {
+    fontSize: 11,
+    color: colors.ink[500],
+    fontFamily: typography.fontBody,
+  },
+  attachments: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  attachmentChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.ink[100],
+  },
+  pressedCard: {
+    opacity: 0.86,
+    transform: [{ scale: 0.99 }],
+  },
+  pressedChip: {
+    opacity: 0.72,
+  },
+  attachmentText: {
+    fontSize: 11,
+    color: colors.ink[600],
+    fontFamily: typography.fontBody,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 16,
+    backgroundColor: colors.white,
+    padding: 16,
+    gap: 10,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.ink[900],
+    fontFamily: typography.fontDisplay,
+  },
+  errorText: {
+    fontSize: 12,
+    color: colors.rose[600],
+    fontFamily: typography.fontBody,
+  },
+  chatModal: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: 16,
+    backgroundColor: colors.white,
+    padding: 16,
+    gap: 12,
+    maxHeight: "80%",
+  },
+  chatHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  chatClose: {
+    fontSize: 12,
+    color: colors.ink[500],
+    fontFamily: typography.fontBody,
+  },
+  chatList: {
+    flexGrow: 0,
+  },
+  chatRow: {
+    flexDirection: "row",
+  },
+  chatRowMine: {
+    justifyContent: "flex-end",
+  },
+  chatRowOther: {
+    justifyContent: "flex-start",
+  },
+  chatBubble: {
+    maxWidth: "80%",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
+    gap: 6,
+  },
+  chatBubbleMine: {
+    backgroundColor: colors.ink[900],
+  },
+  chatBubbleOther: {
+    backgroundColor: colors.ink[100],
+  },
+  chatText: {
+    fontSize: 12,
+    fontFamily: typography.fontBody,
+  },
+  chatTextMine: {
+    color: colors.white,
+  },
+  chatTextOther: {
+    color: colors.ink[700],
+  },
+  chatTime: {
+    fontSize: 9,
+    color: colors.ink[400],
+    textAlign: "right",
+    fontFamily: typography.fontBody,
+  },
+  chatInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  chatInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.ink[200],
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 12,
+    color: colors.ink[800],
+    fontFamily: typography.fontBody,
+    backgroundColor: colors.white,
+  },
+});
