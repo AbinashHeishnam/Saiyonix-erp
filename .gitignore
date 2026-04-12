@@ -70,3 +70,4 @@ backend/scripts/migrate-local-to-r2.*.json
 backend/backup_before_fix.sql
 
 .codex
+apps/teacher-app/eas.json

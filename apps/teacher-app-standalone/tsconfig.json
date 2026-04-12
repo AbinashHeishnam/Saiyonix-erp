@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "jsx": "react-jsx",
+    "moduleResolution": "Bundler",
+    "strict": false,
+    "allowJs": true,
+    "skipLibCheck": true,
+    "types": ["react"],
+    "baseUrl": ".",
+    "paths": {
+      "@saiyonix/*": ["packages/*/src"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", "index.js"]
+}
