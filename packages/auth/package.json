@@ -9,7 +9,7 @@
     "@saiyonix/types": "*",
     "@saiyonix/utils": "*",
     "@react-native-async-storage/async-storage": "^1.24.0",
-    "expo-secure-store": "~13.0.0"
+    "expo-secure-store": "~13.0.2"
   },
   "peerDependencies": {
     "react": "^18.2.0",
