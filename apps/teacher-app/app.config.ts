@@ -15,7 +15,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   android: {
     package: "com.saiyonix.teacher",
-    googleServicesFile: "./google-services.json", // ✅ IMPORTANT
+    googleServicesFile: process.env.GOOGLE_SERVICES_JSON ?? "./google-services.json",  // ✅ IMPORTANT
   },
   plugins: ["expo-notifications", "expo-secure-store"],
   extra: {
