@@ -15,13 +15,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   android: {
     package: "com.saiyonix.teacher",
-    // ✅ removed invalid property
   },
   plugins: ["expo-notifications", "expo-secure-store"],
   extra: {
     apiBaseUrl:
-      process.env.EXPO_PUBLIC_API_BASE_URL ||
+      process.env.EXPO_PUBLIC_API_BASE_URL ??
       "https://api.kangleicareersolution.co.in/api/v1",
-    // ✅ NO projectId here
+    eas: {
+      projectId: "84df03a9-3d48-47e7-a434-b416a7563cd1",
+    },
   },
 });
