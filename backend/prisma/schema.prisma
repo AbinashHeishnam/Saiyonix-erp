@@ -1747,7 +1747,7 @@ model PushToken {
   id          String       @id @default(uuid())
   schoolId    String
   userId      String
-  token       String       @unique
+  token       String
   platform    PushPlatform
   deviceInfo  Json?
   createdAt   DateTime     @default(now())

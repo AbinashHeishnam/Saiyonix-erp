@@ -403,7 +403,7 @@ export async function registerPushToken(input: RegisterTokenInput) {
   } as const;
 
   const stored = await prisma.pushToken.upsert({
-    where: { token },
+    where: { schoolId_token: { schoolId: input.schoolId, token } },
     update: {
       schoolId: input.schoolId,
       userId: input.userId,
