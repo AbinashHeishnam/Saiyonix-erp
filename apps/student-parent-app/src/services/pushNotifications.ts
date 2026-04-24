@@ -78,6 +78,7 @@ export async function registerForPush() {
       try {
         const existing = await Notifications.getPermissionsAsync();
         existingStatus = existing.status;
+        console.log("[PUSH] Permission details (existing):", existing);
       } catch (err) {
         console.error("[PUSH] Failed to read permission status:", err);
         throw err;
@@ -90,6 +91,7 @@ export async function registerForPush() {
         try {
           const requested = await Notifications.requestPermissionsAsync();
           finalStatus = requested.status;
+          console.log("[PUSH] Permission details (requested):", requested);
         } catch (err) {
           console.error("[PUSH] Permission request failed:", err);
           throw err;
@@ -111,12 +113,14 @@ export async function registerForPush() {
       try {
         if (projectId) {
           const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+          console.log("[PUSH] getExpoPushTokenAsync response:", tokenData);
           token = tokenData.data;
         } else {
           // Expo Go / legacy fallback. Works in some dev contexts, but we still log loudly
           // because production builds should always have a projectId.
           console.warn("[PUSH] Missing projectId; attempting getExpoPushTokenAsync() without projectId fallback.");
           const tokenData = await Notifications.getExpoPushTokenAsync();
+          console.log("[PUSH] getExpoPushTokenAsync response:", tokenData);
           token = tokenData.data;
         }
       } catch (err) {
@@ -203,6 +207,10 @@ export async function initPushNotifications() {
 
 export async function syncLastPushTokenToBackend() {
   const tokens = getAuthTokens();
+  console.log("[PUSH][AUTH] syncLastPushTokenToBackend called", {
+    hasAccessToken: Boolean(tokens?.accessToken),
+    hasRefreshToken: Boolean(tokens?.refreshToken),
+  });
   if (!tokens?.accessToken) {
     const err = new Error("Not authenticated (missing access token); refusing to sync push token to backend.");
     console.error("[PUSH] FATAL:", err.message);
@@ -225,6 +233,16 @@ export async function syncLastPushTokenToBackend() {
   const config = getExpoConfig();
 
   try {
+    console.log("[PUSH] Backend token sync request payload:", {
+      token,
+      platform: "expo",
+      deviceInfo: {
+        platform: Platform.OS,
+        appVersion: config?.version ?? null,
+        easProjectId: resolveProjectId(),
+        appOwnership: (Constants as any).appOwnership ?? null,
+      },
+    });
     await registerNotificationToken({
       token,
       platform: "expo",

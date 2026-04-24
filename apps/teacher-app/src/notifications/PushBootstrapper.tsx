@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from "react";
 import * as Notifications from "expo-notifications";
 import { useAuth } from "@saiyonix/auth";
 import { useQueryClient } from "@tanstack/react-query";
+import { getAuthTokens } from "@saiyonix/api";
 
 import { navigationRef } from "../navigation/navigationRef";
 import {
@@ -39,6 +40,11 @@ export default function PushBootstrapper() {
       console.log("[PUSH] No user yet");
       return;
     }
+
+    console.log("[PUSH][AUTH] user available:", user.id, {
+      hasAccessToken: Boolean(getAuthTokens().accessToken),
+      hasRefreshToken: Boolean(getAuthTokens().refreshToken),
+    });
 
     if (lastSyncedUserId.current === user.id) {
       console.log("[PUSH] Already synced");

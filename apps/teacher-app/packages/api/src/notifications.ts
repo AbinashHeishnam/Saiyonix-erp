@@ -1,4 +1,5 @@
-import api from "./client";
+import api, { getAuthTokens } from "./client";
+import type { AxiosError } from "axios";
 import type { NotificationItem } from "@saiyonix/types";
 
 export async function listNotifications(params?: { page?: number; limit?: number }) {
@@ -30,12 +31,40 @@ export async function registerNotificationToken(input: {
   deviceInfo?: unknown;
 }) {
   if (input.platform === "expo") {
-    const res = await api.post("/notifications/register-token", {
-      token: input.token,
-      platform: "expo",
-      deviceInfo: input.deviceInfo,
+    const { accessToken } = getAuthTokens();
+    const maskedAuth =
+      typeof accessToken === "string" && accessToken.length > 16
+        ? `Bearer ${accessToken.slice(0, 8)}…${accessToken.slice(-8)}`
+        : accessToken
+          ? "Bearer ***"
+          : null;
+
+    console.log("[PUSH][API] POST /notifications/register-token start", {
+      hasAuth: Boolean(accessToken),
+      authorization: maskedAuth,
+      payload: { token: input.token, platform: "expo", deviceInfo: input.deviceInfo },
     });
-    return res.data?.data ?? res.data;
+
+    try {
+      const res = await api.post("/notifications/register-token", {
+        token: input.token,
+        platform: "expo",
+        deviceInfo: input.deviceInfo,
+      });
+      console.log("[PUSH][API] POST /notifications/register-token OK", {
+        status: res.status,
+        body: res.data,
+      });
+      return res.data?.data ?? res.data;
+    } catch (err) {
+      const ax = err as AxiosError;
+      console.error("[PUSH][API] POST /notifications/register-token FAILED", {
+        status: ax.response?.status,
+        body: ax.response?.data,
+        message: ax.message,
+      });
+      throw err;
+    }
   }
 
   const res = await api.post("/notifications/fcm/register", { token: input.token });

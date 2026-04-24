@@ -154,6 +154,14 @@ export async function registerToken(req: AuthRequest, res: Response, next: NextF
     const userId = getUserId(req);
     const body = req.body as RegisterTokenInput;
 
+    console.log("[PUSH][API] Incoming push token:", {
+      userId,
+      schoolId,
+      platform: body.platform,
+      token: typeof body.token === "string" ? maskToken(body.token) : null,
+      hasAuthorizationHeader: typeof req.headers.authorization === "string" && req.headers.authorization.length > 0,
+    });
+
     const platform = body.platform === "expo" ? "EXPO" : "FCM";
     const data = await registerPushTokenService({
       schoolId,
