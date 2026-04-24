@@ -42,6 +42,7 @@ const corsOptions: CorsOptions = {
     "Content-Type",
     "Authorization",
     "X-Requested-With",
+    "x-csrf-token",
   ],
 };
 
