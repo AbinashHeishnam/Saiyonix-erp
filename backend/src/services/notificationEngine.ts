@@ -249,11 +249,61 @@ export async function resolveRecipients(input: NotificationInput): Promise<strin
     });
     const existingSet = new Set(existing.map((user) => user.id));
     const missing = requested.filter((id) => !existingSet.has(id));
-    if (missing.length > 0) {
+    if (missing.length === 0) {
+      return requested;
+    }
+
+    // Defensive mapping: some call sites may accidentally pass profile IDs (student/parent/teacher)
+    // instead of user IDs. Map known profile IDs -> linked userId, then re-validate.
+    const [students, parents, teachers] = await Promise.all([
+      prisma.student.findMany({
+        where: { id: { in: missing }, schoolId: sender.schoolId, deletedAt: null, userId: { not: null } },
+        select: { id: true, userId: true },
+      }),
+      prisma.parent.findMany({
+        where: { id: { in: missing }, schoolId: sender.schoolId, userId: { not: null } },
+        select: { id: true, userId: true },
+      }),
+      prisma.teacher.findMany({
+        where: { id: { in: missing }, schoolId: sender.schoolId, deletedAt: null, userId: { not: null } },
+        select: { id: true, userId: true },
+      }),
+    ]);
+
+    const mapped = new Map<string, string>();
+    for (const row of students) {
+      if (row.userId) mapped.set(row.id, row.userId);
+    }
+    for (const row of parents) {
+      if (row.userId) mapped.set(row.id, row.userId);
+    }
+    for (const row of teachers) {
+      if (row.userId) mapped.set(row.id, row.userId);
+    }
+
+    const remapped = uniq(requested.map((id) => mapped.get(id) ?? id));
+    const validated = await prisma.user.findMany({
+      where: { schoolId: sender.schoolId, id: { in: remapped }, isActive: true },
+      select: { id: true },
+    });
+    const validatedSet = new Set(validated.map((user) => user.id));
+    const stillMissing = remapped.filter((id) => !validatedSet.has(id));
+
+    console.warn("[NOTIF ENGINE] USER target recipient mapping", {
+      requestedCount: requested.length,
+      missingCount: missing.length,
+      mappedCount: mapped.size,
+      remappedCount: remapped.length,
+      stillMissingCount: stillMissing.length,
+      sampleRequested: requested.slice(0, 10),
+      sampleRemapped: remapped.slice(0, 10),
+    });
+
+    if (stillMissing.length > 0) {
       throw new ApiError(400, "One or more userIds are invalid/inactive for this school");
     }
 
-    return requested;
+    return remapped;
   }
 
   if (input.targetType === "CLASS") {
@@ -451,13 +501,19 @@ export async function createAndDispatchNotification(
   });
 
   if (created.notificationId && created.userIds.length > 0) {
+    console.log("[PUSH SEND] RECIPIENT USER IDS:", {
+      count: created.userIds.length,
+      sample: created.userIds.slice(0, 50),
+    });
+
     const tokens = await getPushTokens(created.userIds);
+    console.log("[PUSH SEND] TOKENS FOUND:", tokens.length);
     const tokenValues = tokens.map((t) => t.token).filter((t): t is string => Boolean(t));
 
     if (tokenValues.length === 0) {
       let diag: Record<string, unknown> | null = null;
       try {
-        const [total, active, expoActive, byPlatform, sampleUsersWithAnyToken] = await Promise.all([
+        const [total, active, expoActive, byPlatform, sampleUsersWithAnyToken, sampleTokens] = await Promise.all([
           prisma.pushToken.count({ where: { userId: { in: created.userIds } } }),
           prisma.pushToken.count({ where: { userId: { in: created.userIds }, invalidatedAt: null } }),
           prisma.pushToken.count({
@@ -470,6 +526,11 @@ export async function createAndDispatchNotification(
             select: { userId: true },
             take: 5,
           }),
+          prisma.pushToken.findMany({
+            where: { userId: { in: created.userIds.slice(0, 20) } },
+            select: { userId: true, platform: true, invalidatedAt: true },
+            take: 50,
+          }),
         ]);
 
         diag = {
@@ -478,6 +539,7 @@ export async function createAndDispatchNotification(
           tokenRowsExpoActive: expoActive,
           tokenRowsByPlatform: byPlatform.map((row) => ({ platform: row.platform, count: row._count.platform })),
           sampleUsersWithAnyToken: sampleUsersWithAnyToken.map((r) => r.userId),
+          sampleTokens,
         };
       } catch (err) {
         diag = { diagError: err instanceof Error ? err.message : String(err) };

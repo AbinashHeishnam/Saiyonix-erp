@@ -55,7 +55,8 @@ export default function PushBootstrapper() {
       const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
       const target = routeFromPayload(data);
       if (!navigationRef.isReady()) return;
-      navigationRef.navigate("App" as never, target as never);
+      // @ts-ignore: React Navigation types are too strict here without full RootParamList
+      navigationRef.navigate("App", target as any);
     };
 
     setNotificationResponseHandler(handleResponse);
@@ -64,7 +65,7 @@ export default function PushBootstrapper() {
       .then((response) => {
         if (response) handleResponse(response);
       })
-      .catch(() => {});
+      .catch(() => { });
 
     return () => {
       setNotificationResponseHandler(null);
