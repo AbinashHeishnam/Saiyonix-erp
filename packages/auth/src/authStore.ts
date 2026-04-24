@@ -111,12 +111,15 @@ export async function setAuthTokensAndPersist(tokens: { accessToken?: string | n
   await saveTokens(tokens);
 }
 
-export async function clearAuthPersisted() {
+export async function clearAuthPersisted(options?: { preservePushToken?: boolean }) {
+  const preservePushToken = options?.preservePushToken !== false;
   clearAuthTokens();
   await clearTokens();
   await clearSession();
-  await clearPushToken();
-  pushToken = null;
+  if (!preservePushToken) {
+    await clearPushToken();
+    pushToken = null;
+  }
   snapshot = null;
   listeners.forEach((listener) => listener(snapshot));
 }

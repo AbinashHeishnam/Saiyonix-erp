@@ -43,7 +43,7 @@ export default function PushBootstrapper() {
       .catch((err) => {
         console.error("[PUSH] Backend token sync failed (post-auth):", err);
       });
-  }, [user?.id]);
+  }, [user?.id, queryClient]);
 
   useEffect(() => {
     const handleResponse = (response: Notifications.NotificationResponse) => {

@@ -139,6 +139,7 @@ export async function registerForPush() {
       // Always persist locally so post-login sync can use it.
       try {
         await setLastPushToken(token);
+        console.log("[PUSH] TOKEN STORED:", token);
       } catch (err) {
         console.error("[PUSH] Failed to persist token locally:", err);
         throw err;

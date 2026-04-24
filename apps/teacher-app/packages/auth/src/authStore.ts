@@ -1,5 +1,15 @@
 import type { AuthPayload, RoleType, User } from "@saiyonix/types";
-import { clearSession, clearTokens, loadSession, loadTokens, saveSession, saveTokens } from "./storage";
+import {
+  clearPushToken,
+  clearSession,
+  clearTokens,
+  loadPushToken,
+  loadSession,
+  loadTokens,
+  savePushToken,
+  saveSession,
+  saveTokens,
+} from "./storage";
 import { clearAuthTokens, setAuthTokens } from "@saiyonix/api";
 
 export type AuthSnapshot = {
@@ -11,6 +21,7 @@ type Listener = (auth: AuthSnapshot) => void;
 
 let snapshot: AuthSnapshot = null;
 const listeners = new Set<Listener>();
+let pushToken: string | null = null;
 
 function normalizeAuthSnapshot(next: AuthSnapshot): AuthSnapshot {
   if (!next) return null;
@@ -43,6 +54,10 @@ export async function initAuthStore() {
   if (stored) {
     snapshot = normalizeAuthSnapshot(stored as AuthSnapshot);
   }
+  const storedPush = await loadPushToken();
+  if (storedPush?.token) {
+    pushToken = storedPush.token;
+  }
   const tokens = await loadTokens();
   if (tokens) {
     setAuthTokens(tokens);
@@ -57,6 +72,19 @@ export function getAuthSnapshot() {
 export function subscribeAuth(listener: Listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+export function getLastPushToken() {
+  return pushToken;
+}
+
+export async function setLastPushToken(token: string | null) {
+  pushToken = token;
+  if (token) {
+    await savePushToken({ token });
+  } else {
+    await clearPushToken();
+  }
 }
 
 export async function setAuthSnapshot(
@@ -83,10 +111,15 @@ export async function setAuthTokensAndPersist(tokens: { accessToken?: string | n
   await saveTokens(tokens);
 }
 
-export async function clearAuthPersisted() {
+export async function clearAuthPersisted(options?: { preservePushToken?: boolean }) {
+  const preservePushToken = options?.preservePushToken !== false;
   clearAuthTokens();
   await clearTokens();
   await clearSession();
+  if (!preservePushToken) {
+    await clearPushToken();
+    pushToken = null;
+  }
   snapshot = null;
   listeners.forEach((listener) => listener(snapshot));
 }

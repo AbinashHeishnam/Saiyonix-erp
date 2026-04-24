@@ -24,9 +24,11 @@ import {
   initAuthStore,
   setAuthSnapshot,
   setAuthTokensAndPersist,
+  getLastPushToken,
   subscribeAuth,
   type AuthSnapshot,
 } from "./authStore";
+import { removeNotificationToken } from "@saiyonix/api";
 
 interface AuthContextValue {
   user: User | null;
@@ -60,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     setUnauthorizedHandler(async () => {
-      await clearAuthPersisted();
+      await clearAuthPersisted({ preservePushToken: true });
     });
 
     const finishLoading = (payload: AuthSnapshot | null) => {
@@ -89,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             refreshToken: refreshed.refreshToken ?? tokens.refreshToken ?? null,
           });
         } catch {
-          await clearAuthPersisted();
+          await clearAuthPersisted({ preservePushToken: true });
           finishLoading(null);
           return;
         }
@@ -194,12 +196,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
       logout: async () => {
         const tokens = getAuthTokens();
+        const tokenToRemove = getLastPushToken();
+        if (tokenToRemove) {
+          try {
+            await removeNotificationToken({ token: tokenToRemove });
+          } catch {
+            // ignore (logout must still succeed)
+          }
+        }
         try {
           await logoutRequest(tokens.refreshToken ?? undefined);
         } catch {
           // ignore
         }
-        await clearAuthPersisted();
+        await clearAuthPersisted({ preservePushToken: true });
       },
     }),
     [auth, isLoading]

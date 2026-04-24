@@ -63,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     setUnauthorizedHandler(async () => {
-      await clearAuthPersisted();
+      await clearAuthPersisted({ preservePushToken: true });
     });
 
     const finishLoading = (payload: AuthSnapshot | null) => {
@@ -92,7 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             refreshToken: refreshed.refreshToken ?? tokens.refreshToken ?? null,
           });
         } catch {
-          await clearAuthPersisted();
+          await clearAuthPersisted({ preservePushToken: true });
           finishLoading(null);
           return;
         }
@@ -204,14 +204,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } catch {
             // ignore (logout must still succeed)
           }
-          await setLastPushToken(null);
         }
         try {
           await logoutRequest(tokens.refreshToken ?? undefined);
         } catch {
           // ignore
         }
-        await clearAuthPersisted();
+        await clearAuthPersisted({ preservePushToken: true });
       },
     }),
     [auth, isLoading]
