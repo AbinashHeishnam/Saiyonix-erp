@@ -74,3 +74,4 @@ apps/teacher-app/eas.json
 .expo/
 node_modules/
 apps/teacher-app/google-services.json
+apps/student-parent-app/google-services.json
