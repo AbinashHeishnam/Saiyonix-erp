@@ -455,8 +455,37 @@ export async function createAndDispatchNotification(
     const tokenValues = tokens.map((t) => t.token).filter((t): t is string => Boolean(t));
 
     if (tokenValues.length === 0) {
+      let diag: Record<string, unknown> | null = null;
+      try {
+        const [total, active, expoActive, byPlatform, sampleUsersWithAnyToken] = await Promise.all([
+          prisma.pushToken.count({ where: { userId: { in: created.userIds } } }),
+          prisma.pushToken.count({ where: { userId: { in: created.userIds }, invalidatedAt: null } }),
+          prisma.pushToken.count({
+            where: { userId: { in: created.userIds }, invalidatedAt: null, platform: "EXPO" },
+          }),
+          prisma.pushToken.groupBy({ by: ["platform"], where: { userId: { in: created.userIds } }, _count: { platform: true } }),
+          prisma.pushToken.findMany({
+            where: { userId: { in: created.userIds } },
+            distinct: ["userId"],
+            select: { userId: true },
+            take: 5,
+          }),
+        ]);
+
+        diag = {
+          tokenRowsTotal: total,
+          tokenRowsActive: active,
+          tokenRowsExpoActive: expoActive,
+          tokenRowsByPlatform: byPlatform.map((row) => ({ platform: row.platform, count: row._count.platform })),
+          sampleUsersWithAnyToken: sampleUsersWithAnyToken.map((r) => r.userId),
+        };
+      } catch (err) {
+        diag = { diagError: err instanceof Error ? err.message : String(err) };
+      }
+
       console.warn("[PUSH SEND] No active tokens for recipients", {
         recipientCount: created.userIds.length,
+        diag,
       });
     }
 

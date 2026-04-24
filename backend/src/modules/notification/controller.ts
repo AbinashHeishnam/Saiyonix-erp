@@ -171,6 +171,16 @@ export async function registerToken(req: AuthRequest, res: Response, next: NextF
       deviceInfo: body.deviceInfo as never,
     });
 
+    console.log("[PUSH][API] Registered push token:", {
+      userId,
+      schoolId,
+      platform: data.platform,
+      token: maskToken(data.token),
+      pushTokenId: data.id,
+      invalidatedAt: data.invalidatedAt ?? null,
+      lastSeenAt: data.lastSeenAt,
+    });
+
     return success(res, data, "Token registered");
   } catch (error) {
     return next(error);

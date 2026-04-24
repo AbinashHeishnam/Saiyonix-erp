@@ -396,9 +396,11 @@ export async function registerPushToken(input: RegisterTokenInput) {
   if (!token) {
     throw new ApiError(400, "Push token is required");
   }
-  if (input.platform === "EXPO" && !Expo.isExpoPushToken(token)) {
+  const isExpoToken = Expo.isExpoPushToken(token);
+  if (input.platform === "EXPO" && !isExpoToken) {
     throw new ApiError(400, "Invalid Expo push token");
   }
+  const platform: PushPlatform = isExpoToken ? "EXPO" : input.platform;
 
   const select = {
     id: true,
@@ -407,6 +409,7 @@ export async function registerPushToken(input: RegisterTokenInput) {
     createdAt: true,
     updatedAt: true,
     lastSeenAt: true,
+    invalidatedAt: true,
   } as const;
 
   const stored = await prisma.pushToken.upsert({
@@ -415,7 +418,7 @@ export async function registerPushToken(input: RegisterTokenInput) {
       schoolId: input.schoolId,
       userId: input.userId,
       invalidatedAt: null,
-      platform: input.platform,
+      platform,
       deviceInfo: input.deviceInfo,
       lastSeenAt: now,
     },
@@ -423,13 +426,27 @@ export async function registerPushToken(input: RegisterTokenInput) {
       schoolId: input.schoolId,
       userId: input.userId,
       token,
-      platform: input.platform,
+      platform,
       deviceInfo: input.deviceInfo,
       invalidatedAt: null,
       lastSeenAt: now,
     },
     select,
   });
+
+  try {
+    const activeCount = await prisma.pushToken.count({
+      where: { userId: input.userId, invalidatedAt: null, platform: "EXPO" },
+    });
+    logger.info(
+      `[PUSH_TOKEN] stored user=${input.userId} school=${input.schoolId} platform=${stored.platform} activeExpoTokens=${activeCount} token=${token.slice(
+        0,
+        8
+      )}…`
+    );
+  } catch (logError) {
+    logger.warn("[PUSH_TOKEN] stored (failed to compute active count)", logError);
+  }
 
   return stored;
 }
