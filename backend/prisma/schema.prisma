@@ -1759,7 +1759,6 @@ model PushToken {
   logs        NotificationLog[]
 
   @@unique([userId, token])
-  @@unique([schoolId, token])
   @@index([schoolId, platform])
   @@index([userId, platform])
   @@index([invalidatedAt])

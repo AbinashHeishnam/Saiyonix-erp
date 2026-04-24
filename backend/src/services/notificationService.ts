@@ -15,6 +15,7 @@ import pLimit from "p-limit";
 
 import { env } from "@/config/env";
 import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
 import { getRedis } from "@/core/redis";
 import { getNotificationQueue } from "@/core/queue/notificationBullmq";
 import { getFirebaseMessaging } from "@/integrations/firebase";
@@ -392,6 +393,12 @@ async function fetchNotification(notificationId: string) {
 export async function registerPushToken(input: RegisterTokenInput) {
   const now = new Date();
   const token = input.token.trim();
+  if (!token) {
+    throw new ApiError(400, "Push token is required");
+  }
+  if (input.platform === "EXPO" && !Expo.isExpoPushToken(token)) {
+    throw new ApiError(400, "Invalid Expo push token");
+  }
 
   const select = {
     id: true,
@@ -403,7 +410,7 @@ export async function registerPushToken(input: RegisterTokenInput) {
   } as const;
 
   const stored = await prisma.pushToken.upsert({
-    where: { schoolId_token: { schoolId: input.schoolId, token } },
+    where: { userId_token: { userId: input.userId, token } },
     update: {
       schoolId: input.schoolId,
       userId: input.userId,
