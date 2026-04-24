@@ -20,6 +20,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   android: {
     package: "com.saiyonix.studentparent",
+    // @ts-ignore: Deprecated but kept to support older configurations
+    useNextNotificationsApi: true,
     googleServicesFile:
       process.env.GOOGLE_SERVICES_JSON ?? "./google-services.json",
   },
@@ -31,6 +33,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       process.env.EXPO_PUBLIC_API_BASE_URL ??
       "https://api.kangleicareersolution.co.in/api/v1",
 
-
+    eas: {
+      projectId: "617d2f5b-6587-4917-8dc7-d305b77ef56c",
+    },
   },
 });
