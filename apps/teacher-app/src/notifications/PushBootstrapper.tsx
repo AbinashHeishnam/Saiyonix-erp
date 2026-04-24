@@ -4,7 +4,10 @@ import { useAuth } from "@saiyonix/auth";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { navigationRef } from "../navigation/navigationRef";
-import { setNotificationResponseHandler, syncLastPushTokenToBackend } from "../services/pushNotifications";
+import {
+  setNotificationResponseHandler,
+  syncLastPushTokenToBackend,
+} from "../services/pushNotifications";
 
 function safeString(value: unknown) {
   return typeof value === "string" ? value : "";
@@ -15,51 +18,79 @@ function routeFromPayload(data: Record<string, unknown>) {
   const linkUrl = safeString(data.linkUrl);
 
   if (type === "attendance" || linkUrl.startsWith("/attendance")) {
-    return { screen: "Tabs" as const, params: { screen: "Attendance" as const } };
+    return { name: "Attendance", params: {} };
   }
 
   if (type === "notice" || linkUrl.startsWith("/notices")) {
-    return { screen: "TeacherNotices" as const };
+    return { name: "TeacherNotices", params: {} };
   }
 
-  return { screen: "Tabs" as const, params: { screen: "Alerts" as const } };
+  return { name: "Alerts", params: {} };
 }
 
 export default function PushBootstrapper() {
   const { user } = useAuth();
-  const lastRegisteredUserId = useRef<string | null>(null);
+  const lastSyncedUserId = useRef<string | null>(null);
   const queryClient = useQueryClient();
 
+  // 🔥 TOKEN SYNC AFTER LOGIN
   useEffect(() => {
-    if (!user?.id) return;
-    if (lastRegisteredUserId.current === user.id) return;
-    lastRegisteredUserId.current = user.id;
+    if (!user?.id) {
+      console.log("[PUSH] No user yet");
+      return;
+    }
 
-    void syncLastPushTokenToBackend()
+    if (lastSyncedUserId.current === user.id) {
+      console.log("[PUSH] Already synced");
+      return;
+    }
+
+    lastSyncedUserId.current = user.id;
+
+    console.log("[PUSH] Syncing token for:", user.id);
+
+    syncLastPushTokenToBackend()
       .then(() => {
+        console.log("[PUSH] Sync OK");
+
         queryClient.invalidateQueries({ queryKey: ["notification-unread-count"] });
         queryClient.invalidateQueries({ queryKey: ["notifications"] });
       })
       .catch((err) => {
-        console.error("[PUSH] Backend token sync failed (post-auth):", err);
+        console.error("[PUSH] Sync FAILED:", err);
       });
   }, [user?.id, queryClient]);
 
+  // 🔥 HANDLE CLICK
   useEffect(() => {
     const handleResponse = (response: Notifications.NotificationResponse) => {
+      console.log("[PUSH] Click received");
+
       const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
       const target = routeFromPayload(data);
-      if (!navigationRef.isReady()) return;
-      navigationRef.navigate("App" as never, target as never);
+
+      if (!navigationRef.isReady()) {
+        console.warn("[PUSH] Navigation not ready");
+        return;
+      }
+
+      // ✅ FIXED NAVIGATION (NO NEVER ERROR)
+      navigationRef.navigate(target.name as any, target.params as any);
     };
 
     setNotificationResponseHandler(handleResponse);
 
-    void Notifications.getLastNotificationResponseAsync()
+    // cold start
+    Notifications.getLastNotificationResponseAsync()
       .then((response) => {
-        if (response) handleResponse(response);
+        if (response) {
+          console.log("[PUSH] Opened from killed state");
+          handleResponse(response);
+        }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("[PUSH] Cold start error:", err);
+      });
 
     return () => {
       setNotificationResponseHandler(null);
