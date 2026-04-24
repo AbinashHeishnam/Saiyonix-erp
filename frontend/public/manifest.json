@@ -1,0 +1,9 @@
+{
+"name": "SaiyoniX",
+"short_name": "SaiyoniX",
+"start_url": "/",
+"display": "standalone",
+"background_color": "#0f172a",
+"theme_color": "#0f172a",
+"gcm_sender_id": "103953800507"
+}

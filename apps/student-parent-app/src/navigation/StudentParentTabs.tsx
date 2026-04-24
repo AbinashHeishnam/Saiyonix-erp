@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { getNotificationsUnreadCount } from "@saiyonix/api";
+import { useAuth } from "@saiyonix/auth";
 import { LoadingState, colors, typography } from "@saiyonix/ui";
 
 import StudentParentDashboardScreen from "../screens/app/StudentParentDashboardScreen";
@@ -69,9 +70,11 @@ const Tab = createBottomTabNavigator<StudentParentTabParamList>();
 const Stack = createNativeStackNavigator<StudentParentStackParamList>();
 
 function Tabs() {
+  const { user, isLoading } = useAuth();
   const unreadQuery = useQuery({
     queryKey: ["notification-unread-count"],
     queryFn: getNotificationsUnreadCount,
+    enabled: Boolean(user) && !isLoading,
   });
   const unreadPayload: any = unreadQuery.data;
   const unreadCount =

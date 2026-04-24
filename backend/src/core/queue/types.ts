@@ -5,7 +5,9 @@ export type JobType =
   | "ADMIT_CARD_GENERATE"
   | "ADMIT_CARD_PDF_GENERATE"
   | "REPORT_CARD_PDF_GENERATE"
-  | "ASSIGNMENT_REMINDER";
+  | "ASSIGNMENT_REMINDER"
+  | "NOTIFICATION_MONITOR"
+  | "PUSH_TOKEN_CLEANUP";
 
 export type JobPayload =
   | { type: "RESULTS_RECOMPUTE"; schoolId: string; examId: string }
@@ -19,4 +21,6 @@ export type JobPayload =
   | { type: "ADMIT_CARD_GENERATE"; schoolId: string; examId: string }
   | { type: "ADMIT_CARD_PDF_GENERATE"; schoolId: string; examId: string }
   | { type: "REPORT_CARD_PDF_GENERATE"; schoolId: string; examId: string; studentId: string }
-  | { type: "ASSIGNMENT_REMINDER"; schoolId: string };
+  | { type: "ASSIGNMENT_REMINDER"; schoolId: string }
+  | { type: "NOTIFICATION_MONITOR"; schoolId: string }
+  | { type: "PUSH_TOKEN_CLEANUP"; schoolId: string };

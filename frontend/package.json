@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-firebase-sw-deps.mjs",
+    "prebuild": "node scripts/copy-firebase-sw-deps.mjs",
+    "prepreview": "node scripts/copy-firebase-sw-deps.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
@@ -11,6 +14,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.96.2",
     "axios": "^1.7.9",
+    "firebase": "^10.14.1",
     "framer-motion": "^12.38.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^2.5.1",

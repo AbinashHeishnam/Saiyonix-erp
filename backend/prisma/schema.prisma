@@ -36,8 +36,10 @@ model School {
   messageThreads         MessageThread[]
   notices                NoticeBoard[]
   notifications          Notification[]
+  notificationLogs       NotificationLog[]
   parents                Parent[]
   periods                Period[]
+  pushTokens             PushToken[]
   promotionCriteria      PromotionCriteria[]
   events                 SchoolEvent[]
   students               Student[]
@@ -444,10 +446,12 @@ model User {
   receivedMessages       Message[]               @relation("MessageRecipient")
   sentMessages           Message[]               @relation("MessageSender")
   sentNotifications      Notification[]          @relation("NotificationSender")
+  notificationLogs       NotificationLog[]
   notificationRecipients NotificationRecipient[]
   otpLogs                OtpLog[]
   emailOtpLogs           EmailOtpLog[]
   parents                Parent?
+  pushTokens             PushToken[]
   sessions               Session[]
   students               Student?
   teachers               Teacher?
@@ -633,6 +637,7 @@ model ParentStudentLink {
   id        String   @id @default(uuid())
   parentId  String
   studentId String
+  isActive  Boolean  @default(true)
   isPrimary Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -642,6 +647,7 @@ model ParentStudentLink {
   @@unique([parentId, studentId])
   @@index([parentId])
   @@index([studentId])
+  @@index([studentId, isActive])
 }
 
 model StudentEnrollment {
@@ -1690,9 +1696,11 @@ model ComplaintEscalation {
 model Notification {
   id          String                  @id @default(uuid())
   schoolId    String
+  type        NotificationType        @default(GENERAL)
   eventType   String?
   title       String
   body        String
+  data        Json?
   category    String?
   priority    NotificationPriority    @default(LOW)
   sentVia     Json?
@@ -1707,9 +1715,11 @@ model Notification {
   updatedAt   DateTime                @updatedAt
   school      School                  @relation(fields: [schoolId], references: [id])
   sender      User?                   @relation("NotificationSender", fields: [sentById], references: [id])
+  logs        NotificationLog[]
   recipients  NotificationRecipient[]
 
   @@index([schoolId])
+  @@index([schoolId, type, createdAt])
   @@index([sentAt])
 }
 
@@ -1717,15 +1727,72 @@ model NotificationRecipient {
   id             String       @id @default(uuid())
   notificationId String
   userId         String
+  entityId        String?
+  type            String       @default("GENERAL")
   deliveryStatus String?      @default("QUEUED")
   readAt         DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   notification   Notification @relation(fields: [notificationId], references: [id])
+  logs           NotificationLog[]
   user           User         @relation(fields: [userId], references: [id])
 
   @@unique([notificationId, userId])
+  @@unique([userId, type, entityId])
   @@index([userId])
+  @@index([userId, readAt])
+}
+
+model PushToken {
+  id          String       @id @default(uuid())
+  schoolId    String
+  userId      String
+  token       String       @unique
+  platform    PushPlatform
+  deviceInfo  Json?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  lastSeenAt  DateTime     @default(now())
+  invalidatedAt DateTime?
+  school      School       @relation(fields: [schoolId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+  logs        NotificationLog[]
+
+  @@unique([userId, token])
+  @@unique([schoolId, token])
+  @@index([schoolId, platform])
+  @@index([userId, platform])
+  @@index([invalidatedAt])
+}
+
+model NotificationLog {
+  id                      String                @id @default(uuid())
+  schoolId                String
+  notificationId          String
+  notificationRecipientId String?
+  pushTokenId             String?
+  userId                  String?
+  channel                 NotificationChannel
+  platform                PushPlatform?
+  status                  NotificationLogStatus @default(PENDING)
+  providerMessageId       String?
+  errorCode               String?
+  errorMessage            String?
+  attemptCount            Int                   @default(0)
+  deliveredAt             DateTime?
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  notification            Notification          @relation(fields: [notificationId], references: [id])
+  recipient               NotificationRecipient? @relation(fields: [notificationRecipientId], references: [id])
+  pushToken               PushToken?            @relation(fields: [pushTokenId], references: [id])
+  school                  School                @relation(fields: [schoolId], references: [id])
+  user                    User?                 @relation(fields: [userId], references: [id])
+
+  @@index([schoolId, status, createdAt])
+  @@index([notificationId, channel])
+  @@index([notificationRecipientId])
+  @@index([pushTokenId])
+  @@index([userId, createdAt])
 }
 
 model NotificationJob {
@@ -2133,6 +2200,31 @@ enum NotificationPriority {
   MEDIUM
   HIGH
   CRITICAL
+}
+
+enum NotificationType {
+  ATTENDANCE
+  NOTICE
+  GENERAL
+}
+
+enum PushPlatform {
+  EXPO
+  FCM
+}
+
+enum NotificationChannel {
+  MOBILE_PUSH
+  WEB_PUSH
+  IN_APP
+}
+
+enum NotificationLogStatus {
+  PENDING
+  SENT
+  FAILED
+  INVALID_TOKEN
+  SKIPPED
 }
 
 enum PaymentStatus {

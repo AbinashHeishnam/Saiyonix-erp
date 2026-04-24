@@ -15,6 +15,7 @@ import {
   verifyEmailOtp,
   getSession,
 } from "../services/api/auth";
+import { teardownFcmPushOnLogout } from "../services/fcmNotifications";
 import { initAuthStore, setAuthSnapshot, subscribeAuth, type AuthSnapshot } from "../services/api/authStore";
 import { getLoginPathForRole } from "../utils/authRedirect";
 
@@ -133,6 +134,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout: async () => {
         const roleType = auth?.user?.role?.roleType ?? auth?.role ?? null;
         const redirectTo = getLoginPathForRole(roleType);
+        try {
+          await teardownFcmPushOnLogout();
+        } catch {
+          // ignore (logout must still succeed)
+        }
         try {
           await logout();
         } catch {

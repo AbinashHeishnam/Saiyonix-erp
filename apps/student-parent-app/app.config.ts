@@ -20,9 +20,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   android: {
     package: "com.saiyonix.studentparent",
+    useNextNotificationsApi: true,
   },
 
-  plugins: ["expo-secure-store"],
+  plugins: ["expo-notifications", "expo-secure-store"],
 
   extra: {
     apiBaseUrl:
@@ -30,7 +31,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "https://api.kangleicareersolution.co.in/api/v1",
 
     eas: {
-      projectId: "2fb69882-9f6c-447b-a144-cc95cdb8e7c6",
+      projectId:
+        process.env.EXPO_PUBLIC_EAS_PROJECT_ID ?? "2fb69882-9f6c-447b-a144-cc95cdb8e7c6",
     },
   },
 });

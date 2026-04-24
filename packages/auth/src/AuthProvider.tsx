@@ -24,9 +24,12 @@ import {
   initAuthStore,
   setAuthSnapshot,
   setAuthTokensAndPersist,
+  getLastPushToken,
+  setLastPushToken,
   subscribeAuth,
   type AuthSnapshot,
 } from "./authStore";
+import { removeNotificationToken } from "@saiyonix/api";
 
 interface AuthContextValue {
   user: User | null;
@@ -194,6 +197,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
       logout: async () => {
         const tokens = getAuthTokens();
+        const tokenToRemove = getLastPushToken();
+        if (tokenToRemove) {
+          try {
+            await removeNotificationToken({ token: tokenToRemove });
+          } catch {
+            // ignore (logout must still succeed)
+          }
+          await setLastPushToken(null);
+        }
         try {
           await logoutRequest(tokens.refreshToken ?? undefined);
         } catch {

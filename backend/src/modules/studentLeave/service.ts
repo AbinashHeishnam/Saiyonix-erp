@@ -5,7 +5,7 @@ import { ApiError } from "@/core/errors/apiError";
 import { buildDateRange, normalizeDate } from "@/core/utils/date";
 import { safeRedisDel } from "@/core/cache/invalidate";
 import { logAudit } from "@/utils/audit";
-import { trigger as triggerNotification } from "@/modules/notification/service";
+import { createAndDispatchNotification } from "@/services/notificationEngine";
 import type { ApplyStudentLeaveInput, CreateStudentLeaveInput } from "@/modules/studentLeave/validation";
 
 type ActorContext = {
@@ -289,6 +289,34 @@ function resolveRequesterUserId(leave: {
   return leave.student.userId ?? null;
 }
 
+async function resolveStudentAndParentUserIds(params: {
+  schoolId: string;
+  studentId: string;
+  studentUserId: string | null;
+  appliedByParentUserId: string | null;
+}) {
+  const ids = new Set<string>();
+  if (params.studentUserId) ids.add(params.studentUserId);
+  if (params.appliedByParentUserId) ids.add(params.appliedByParentUserId);
+
+  const links = await prisma.parentStudentLink.findMany({
+    where: {
+      studentId: params.studentId,
+      isActive: true,
+      parent: { schoolId: params.schoolId, userId: { not: null } },
+    },
+    select: { parent: { select: { userId: true } } },
+  });
+
+  for (const link of links) {
+    if (link.parent.userId) {
+      ids.add(link.parent.userId);
+    }
+  }
+
+  return Array.from(ids);
+}
+
 async function applyApprovedLeaveAttendance(
   schoolId: string,
   studentId: string,
@@ -421,30 +449,22 @@ export async function createStudentLeave(
     },
   });
 
-  const approverIds = await resolveApproverUserIds(schoolId, context.studentId);
-  if (approverIds.length > 0) {
-    await triggerNotification("LEAVE_REQUEST_SUBMITTED", {
-      schoolId,
-      userIds: approverIds,
-      title: "Leave Request Submitted",
-      body: "A new student leave request is awaiting approval.",
-      sentById: userId,
+  await createAndDispatchNotification({
+    type: "LEAVE_APPLIED",
+    title: "Leave Request Submitted",
+    message: "A new student leave request is awaiting approval.",
+    senderId: userId,
+    targetType: "ROLE",
+    role: "ADMIN",
+    meta: {
       entityType: "STUDENT_LEAVE",
       entityId: leave.id,
+      leaveId: leave.id,
+      studentId: context.studentId,
+      leaveType: payload.leaveType ?? null,
       linkUrl: "/admin/student-leaves",
-      metadata: {
-        eventType: "LEAVE_REQUEST_SUBMITTED",
-        leaveId: leave.id,
-        studentId: context.studentId,
-        leaveType: payload.leaveType ?? null,
-        routes: {
-          ADMIN: "/admin/student-leaves",
-          ACADEMIC_SUB_ADMIN: "/admin/student-leaves",
-          TEACHER: "/teacher/leave",
-        },
-      },
-    });
-  }
+    },
+  });
 
   return leave;
 }
@@ -672,36 +692,40 @@ async function updateStudentLeaveStatus(
 
   const requesterUserId = resolveRequesterUserId(leave);
   if (requesterUserId) {
-    await triggerNotification(
-      status === LeaveStatus.APPROVED
-        ? "LEAVE_REQUEST_APPROVED"
-        : "LEAVE_REQUEST_REJECTED",
-      {
-        schoolId,
-        userIds: [requesterUserId],
+    const recipientUserIds = await resolveStudentAndParentUserIds({
+      schoolId,
+      studentId: leave.student.id,
+      studentUserId: leave.student.userId ?? null,
+      appliedByParentUserId: leave.appliedByParent?.userId ?? null,
+    });
+
+    if (recipientUserIds.length > 0) {
+      await createAndDispatchNotification({
+        type:
+          status === LeaveStatus.APPROVED
+            ? "STUDENT_LEAVE_APPROVED"
+            : "STUDENT_LEAVE_REJECTED",
         title: `Leave ${status === LeaveStatus.APPROVED ? "Approved" : "Rejected"}`,
-        body: `Your student leave request has been ${
+        message: `Your student leave request has been ${
           status === LeaveStatus.APPROVED ? "approved" : "rejected"
         }.`,
-        sentById: userId,
-        entityType: "STUDENT_LEAVE",
-        entityId: leave.id,
-        linkUrl: "/student/leave",
-        metadata: {
+        senderId: userId,
+        targetType: "USER",
+        userIds: recipientUserIds,
+        meta: {
+          entityType: "STUDENT_LEAVE",
+          entityId: leave.id,
+          leaveId: leave.id,
+          studentId: leave.student.id,
+          leaveType: leave.leaveType ?? null,
+          linkUrl: "/student/leave",
           eventType:
             status === LeaveStatus.APPROVED
               ? "LEAVE_REQUEST_APPROVED"
               : "LEAVE_REQUEST_REJECTED",
-          leaveId: leave.id,
-          studentId: leave.student.id,
-          leaveType: leave.leaveType ?? null,
-          routes: {
-            STUDENT: "/student/leave",
-            PARENT: "/parent/leave",
-          },
         },
-      }
-    );
+      });
+    }
   }
 
   try {
@@ -798,22 +822,23 @@ export async function cancelStudentLeave(
     },
   });
 
-  const approverIds = await resolveApproverUserIds(schoolId, leave.student.id);
-  if (approverIds.length > 0) {
-    await triggerNotification("LEAVE_REQUEST_CANCELLED", {
-      schoolId,
-      userIds: approverIds,
-      title: "Leave Request Cancelled",
-      body: "A student leave request has been cancelled.",
-      sentById: userId,
-      metadata: {
-        eventType: "LEAVE_REQUEST_CANCELLED",
-        leaveId: leave.id,
-        studentId: leave.student.id,
-        leaveType: leave.leaveType ?? null,
-      },
-    });
-  }
+  await createAndDispatchNotification({
+    type: "LEAVE_APPLIED",
+    title: "Leave Request Cancelled",
+    message: "A student leave request has been cancelled.",
+    senderId: userId,
+    targetType: "ROLE",
+    role: "ADMIN",
+    meta: {
+      entityType: "STUDENT_LEAVE",
+      entityId: leave.id,
+      leaveId: leave.id,
+      studentId: leave.student.id,
+      leaveType: leave.leaveType ?? null,
+      eventType: "LEAVE_REQUEST_CANCELLED",
+      linkUrl: "/admin/student-leaves",
+    },
+  });
 
   return updated;
 }

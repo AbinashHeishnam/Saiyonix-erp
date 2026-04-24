@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import prisma from "@/core/db/prisma";
 import { ApiError } from "@/core/errors/apiError";
 import { bumpVersion } from "@/core/cache/cacheVersion";
-import { trigger as triggerNotification } from "@/modules/notification/service";
+import { createAndDispatchNotification } from "@/services/notificationEngine";
 import { resolveStudentEnrollmentForPortal } from "@/modules/student/enrollmentUtils";
 import type {
   CreateAssignmentInput,
@@ -256,6 +256,7 @@ export async function createAssignment(
   payload: CreateAssignmentInput,
   actor: ActorContext
 ): Promise<AssignmentWithTeacher> {
+  const { userId } = ensureActor(actor);
   const teacherId = await resolveTeacherIdForActor(schoolId, actor);
 
   const { assignment, classId, academicYearId } = await prisma.$transaction(async (tx) => {
@@ -301,37 +302,24 @@ export async function createAssignment(
   await bumpVersion(versionKey);
 
   try {
-    const enrollments = await prisma.studentEnrollment.findMany({
-      where: {
-        classId,
-        academicYearId,
-        ...(payload.sectionId ? { sectionId: payload.sectionId } : {}),
-        student: { schoolId, deletedAt: null },
-      },
-      select: { studentId: true },
-    });
-    const studentIds = enrollments.map((item) => item.studentId);
-    if (studentIds.length > 0) {
-      await triggerNotification("ASSIGNMENT_PUBLISHED", {
-        schoolId,
-        studentIds,
-        academicYearId,
-        title: "New Assignment Posted",
-        body: payload.title,
+    await createAndDispatchNotification({
+      type: "ASSIGNMENT_CREATED",
+      title: "New Assignment Posted",
+      message: payload.title,
+      senderId: userId,
+      targetType: "CLASS",
+      classId,
+      meta: {
         entityType: "ASSIGNMENT",
         entityId: assignment.id,
+        assignmentId: assignment.id,
+        classId,
+        sectionId: payload.sectionId ?? null,
+        academicYearId,
+        includeParents: true,
         linkUrl: "/classroom",
-        metadata: {
-          assignmentId: assignment.id,
-          classId,
-          sectionId: payload.sectionId ?? null,
-          routes: {
-            STUDENT: "/classroom",
-            PARENT: "/classroom",
-          },
-        },
-      });
-    }
+      },
+    });
   } catch {
     // ignore notification failure
   }
@@ -757,6 +745,19 @@ export async function checkAndSendAssignmentReminders(schoolId: string) {
     return { assignments: 0, notifications: 0 };
   }
 
+  const systemSender = await prisma.user.findFirst({
+    where: {
+      schoolId,
+      isActive: true,
+      role: { roleType: { in: ["SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "FINANCE_SUB_ADMIN"] } },
+    },
+    select: { id: true },
+  });
+
+  if (!systemSender?.id) {
+    return { assignments: assignments.length, notifications: 0 };
+  }
+
   const classIds = Array.from(
     new Set(assignments.map((assignment) => assignment.classSubject.classId))
   );
@@ -854,22 +855,20 @@ export async function checkAndSendAssignmentReminders(schoolId: string) {
       continue;
     }
 
-    await triggerNotification("USER_MESSAGE", {
-      schoolId,
-      userIds,
+    await createAndDispatchNotification({
+      type: "CLASS_ANNOUNCEMENT",
       title: "Assignment due soon",
-      body: `Assignment "${assignment.title}" is due within 24 hours.`,
-      entityType: "ASSIGNMENT",
-      entityId: assignment.id,
-      linkUrl: "/classroom",
-      metadata: {
+      message: `Assignment "${assignment.title}" is due within 24 hours.`,
+      senderId: systemSender.id,
+      targetType: "USER",
+      userIds,
+      meta: {
+        entityType: "ASSIGNMENT",
+        entityId: assignment.id,
         assignmentId: assignment.id,
         classId: assignment.classSubject.classId,
         sectionId: assignment.sectionId ?? null,
-        routes: {
-          STUDENT: "/classroom",
-          PARENT: "/classroom",
-        },
+        linkUrl: "/classroom",
       },
     });
 

@@ -5,12 +5,12 @@ vi.mock("../src/config/prisma", () => ({
   default: createMockPrisma(),
 }));
 
-vi.mock("../src/modules/notification/service", () => ({
-  trigger: vi.fn(),
+vi.mock("../src/services/notificationEngine", () => ({
+  createAndDispatchNotification: vi.fn(),
 }));
 
 import prisma from "../src/config/prisma";
-import { trigger } from "../src/modules/notification/service";
+import { createAndDispatchNotification } from "../src/services/notificationEngine";
 import { markAttendance } from "../src/modules/attendance/service";
 import {
   approveAttendanceCorrection,
@@ -19,7 +19,7 @@ import {
 import { getStudentMonthlySummary } from "../src/modules/attendance/summaries/service";
 
 const mockedPrisma = vi.mocked(prisma, true);
-const mockedTrigger = vi.mocked(trigger);
+const mockedCreateAndDispatch = vi.mocked(createAndDispatchNotification);
 
 const schoolId = "school-1";
 
@@ -48,6 +48,9 @@ describe("attendance module", () => {
       { studentId: "student-1" },
     ] as never);
     mockedPrisma.studentAttendance.findMany.mockResolvedValue([] as never);
+    mockedPrisma.school.findUnique.mockResolvedValue({ timezone: "Asia/Kolkata" } as never);
+    mockedPrisma.student.findFirst.mockResolvedValue({ userId: "student-user" } as never);
+    mockedPrisma.parentStudentLink.findMany.mockResolvedValue([] as never);
     mockedPrisma.systemSetting.findMany.mockResolvedValue([
       { settingKey: "ATTENDANCE_WINDOW_MINUTES", settingValue: 1440 },
       { settingKey: "ATTENDANCE_WARNING_LEVELS", settingValue: [85, 80, 75] },
@@ -109,17 +112,15 @@ describe("attendance module", () => {
       { roleType: "TEACHER", userId: "user-1" }
     );
 
-    expect(mockedTrigger).toHaveBeenCalledWith(
-      "STUDENT_ALERT",
+    expect(mockedCreateAndDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: expect.objectContaining({ eventType: "ATTENDANCE_ABSENT" }),
+        meta: expect.objectContaining({ eventType: "ATTENDANCE_ABSENT" }),
       })
     );
 
-    expect(mockedTrigger).toHaveBeenCalledWith(
-      "STUDENT_ALERT",
+    expect(mockedCreateAndDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: expect.objectContaining({ eventType: "ATTENDANCE_THRESHOLD" }),
+        meta: expect.objectContaining({ eventType: "ATTENDANCE_THRESHOLD" }),
       })
     );
   });

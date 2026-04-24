@@ -5,8 +5,8 @@ vi.mock("../src/config/prisma", () => ({
   default: createMockPrisma(),
 }));
 
-vi.mock("../src/modules/notification/service", () => ({
-  trigger: vi.fn(),
+vi.mock("../src/services/notificationEngine", () => ({
+  createAndDispatchNotification: vi.fn(),
 }));
 
 import prisma from "../src/config/prisma";

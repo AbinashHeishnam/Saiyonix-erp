@@ -17,6 +17,9 @@ export {
   markNotificationRead,
   markAllNotificationsRead,
   getUnreadCount as getNotificationsUnreadCount,
+  registerNotificationToken,
+  removeNotificationToken,
+  unregisterFcmToken,
 } from "./notifications";
 export * from "./classroom";
 export * from "./exams";

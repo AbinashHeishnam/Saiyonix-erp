@@ -1,9 +1,9 @@
-import { Prisma, type NoticeBoard, type UserRole } from "@prisma/client";
+import { Prisma, type NoticeBoard } from "@prisma/client";
 
 import prisma from "@/core/db/prisma";
 import { ApiError } from "@/core/errors/apiError";
 import { logAudit } from "@/utils/audit";
-import { trigger as triggerNotification } from "@/modules/notification/service";
+import { createAndDispatchNotification } from "@/services/notificationEngine";
 import type { CreateNoticeInput, UpdateNoticeInput } from "@/modules/noticeBoard/validation";
 
 type NoticeFilters = {
@@ -220,53 +220,88 @@ export async function createNotice(
 
     try {
       const targetType = notice.targetType ?? "ALL";
+      if (!createdById) {
+        return notice;
+      }
+
       if (targetType === "ALL") {
-        await triggerNotification("SCHOOL_BROADCAST", {
-          schoolId,
+        await createAndDispatchNotification({
+          type: "NOTICE",
           title: notice.title,
-          body: notice.content,
-          sentById: createdById ?? undefined,
-          entityType: "NOTICE",
-          entityId: notice.id,
-          linkUrl: `/notices/${notice.id}`,
-          metadata: { noticeId: notice.id },
+          message: notice.content,
+          senderId: createdById,
+          targetType: "ALL",
+          meta: {
+            entityType: "NOTICE",
+            entityId: notice.id,
+            noticeId: notice.id,
+            linkUrl: `/notices/${notice.id}`,
+          },
         });
       } else if (targetType === "ROLE" && notice.targetRole) {
-        await triggerNotification("ROLE_BROADCAST", {
-          schoolId,
+        const role =
+          notice.targetRole === "TEACHER"
+            ? "TEACHER"
+            : notice.targetRole === "STUDENT"
+              ? "STUDENT"
+              : notice.targetRole === "PARENT"
+                ? "PARENT"
+                : "ADMIN";
+
+        await createAndDispatchNotification({
+          type: "NOTICE",
           title: notice.title,
-          body: notice.content,
-          roles: [notice.targetRole as UserRole],
-          sentById: createdById ?? undefined,
-          entityType: "NOTICE",
-          entityId: notice.id,
-          linkUrl: `/notices/${notice.id}`,
-          metadata: { noticeId: notice.id },
+          message: notice.content,
+          senderId: createdById,
+          targetType: "ROLE",
+          role,
+          meta: {
+            entityType: "NOTICE",
+            entityId: notice.id,
+            noticeId: notice.id,
+            linkUrl: `/notices/${notice.id}`,
+          },
         });
       } else if (targetType === "CLASS" && notice.targetClassId) {
-        await triggerNotification("CLASS_BROADCAST", {
-          schoolId,
+        await createAndDispatchNotification({
+          type: "NOTICE",
           title: notice.title,
-          body: notice.content,
+          message: notice.content,
+          senderId: createdById,
+          targetType: "CLASS",
           classId: notice.targetClassId,
-          sentById: createdById ?? undefined,
-          entityType: "NOTICE",
-          entityId: notice.id,
-          linkUrl: `/notices/${notice.id}`,
-          metadata: { noticeId: notice.id },
+          meta: {
+            entityType: "NOTICE",
+            entityId: notice.id,
+            noticeId: notice.id,
+            linkUrl: `/notices/${notice.id}`,
+            includeParents: true,
+          },
         });
       } else if (targetType === "SECTION" && notice.targetSectionId) {
-        await triggerNotification("SECTION_BROADCAST", {
-          schoolId,
-          title: notice.title,
-          body: notice.content,
-          sectionId: notice.targetSectionId,
-          sentById: createdById ?? undefined,
-          entityType: "NOTICE",
-          entityId: notice.id,
-          linkUrl: `/notices/${notice.id}`,
-          metadata: { noticeId: notice.id },
+        const section = await prisma.section.findFirst({
+          where: { id: notice.targetSectionId, deletedAt: null, class: { schoolId, deletedAt: null } },
+          select: { classId: true },
         });
+
+        if (section?.classId) {
+          await createAndDispatchNotification({
+            type: "NOTICE",
+            title: notice.title,
+            message: notice.content,
+            senderId: createdById,
+            targetType: "CLASS",
+            classId: section.classId,
+            meta: {
+              entityType: "NOTICE",
+              entityId: notice.id,
+              noticeId: notice.id,
+              linkUrl: `/notices/${notice.id}`,
+              sectionId: notice.targetSectionId,
+              includeParents: true,
+            },
+          });
+        }
       }
     } catch (error) {
       console.warn("[notice] notification trigger failed", error);

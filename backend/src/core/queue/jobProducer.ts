@@ -19,6 +19,10 @@ function buildJobId(payload: JobPayload) {
       return `report-card-pdf:${payload.schoolId}:${payload.examId}:${payload.studentId}`;
     case "ASSIGNMENT_REMINDER":
       return `assignment-reminder:${payload.schoolId}`;
+    case "NOTIFICATION_MONITOR":
+      return `notification-monitor:${payload.schoolId}`;
+    case "PUSH_TOKEN_CLEANUP":
+      return `push-token-cleanup:${payload.schoolId}`;
     default:
       return undefined;
   }

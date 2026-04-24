@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import prisma from "@/core/db/prisma";
 import { ApiError } from "@/core/errors/apiError";
 import { bumpVersion } from "@/core/cache/cacheVersion";
-import { trigger as triggerNotification } from "@/modules/notification/service";
+import { createAndDispatchNotification } from "@/services/notificationEngine";
 import { resolveStudentEnrollmentForPortal } from "@/modules/student/enrollmentUtils";
 import type { CreateNoteInput, UpdateNoteInput } from "@/modules/notes/validation";
 
@@ -252,6 +252,7 @@ export async function createNote(
   payload: CreateNoteInput,
   actor: ActorContext
 ): Promise<NoteWithTeacher> {
+  const { userId } = ensureActor(actor);
   const teacherId = await resolveTeacherIdForActor(schoolId, actor);
 
   const { note, classId, academicYearId } = await prisma.$transaction(async (tx) => {
@@ -302,36 +303,24 @@ export async function createNote(
   await bumpVersion(versionKey);
 
   try {
-    const enrollments = await prisma.studentEnrollment.findMany({
-      where: {
-        classId,
-        academicYearId,
-        ...(payload.sectionId ? { sectionId: payload.sectionId } : {}),
-        student: { schoolId, deletedAt: null },
-      },
-      select: { studentId: true },
-    });
-    const studentIds = enrollments.map((item) => item.studentId);
-    if (studentIds.length > 0) {
-      await triggerNotification("NOTE_PUBLISHED", {
-        schoolId,
-        studentIds,
-        title: "New Note Published",
-        body: payload.title,
+    await createAndDispatchNotification({
+      type: "NOTES_SHARED",
+      title: "New Note Published",
+      message: payload.title,
+      senderId: userId,
+      targetType: "CLASS",
+      classId,
+      meta: {
         entityType: "NOTE",
         entityId: note.id,
+        noteId: note.id,
+        classId,
+        sectionId: payload.sectionId ?? null,
+        academicYearId,
+        includeParents: true,
         linkUrl: "/classroom",
-        metadata: {
-          noteId: note.id,
-          classId,
-          sectionId: payload.sectionId ?? null,
-          routes: {
-            STUDENT: "/classroom",
-            PARENT: "/classroom",
-          },
-        },
-      });
-    }
+      },
+    });
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.error("[notify] note publish failed", error);

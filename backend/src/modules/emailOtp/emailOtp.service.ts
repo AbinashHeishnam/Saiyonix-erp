@@ -11,7 +11,7 @@ import { hashRefreshToken } from "@/utils/refreshToken";
 import { sendOtpEmail } from "@/services/email/email.service";
 
 const EMAIL_OTP_PURPOSE_LOGIN = "LOGIN";
-const REFRESH_TOKEN_TTL_DAYS = 7;
+const REFRESH_TOKEN_TTL_DAYS = 30;
 
 const EMAIL_OTP_ALLOWED_ROLES = new Set([
   "ADMIN",

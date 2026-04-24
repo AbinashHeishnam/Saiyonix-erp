@@ -5,11 +5,25 @@ import type { AuthRequest } from "../../middleware/auth.middleware";
 import { requirePermission } from "../../middleware/permission.middleware";
 import { allowRoles } from "../../middleware/rbac.middleware";
 import { validate } from "../../middleware/validate.middleware";
-import { list, markAllRead, markRead, send, unreadCount } from "@/modules/notification/controller";
+import {
+  getFirebaseWebConfig,
+  list,
+  markAllRead,
+  markRead,
+  registerFcm,
+  registerToken,
+  removeToken,
+  send,
+  unreadCount,
+  unregisterFcm,
+} from "@/modules/notification/controller";
 import { sendNotificationSchema } from "@/modules/notification/send.validation";
 import { listNotificationQuerySchema, notificationIdParamSchema } from "@/modules/notification/validation";
+import { registerTokenSchema, removeTokenSchema } from "@/modules/notification/token.validation";
+import { registerFcmSchema, unregisterFcmSchema } from "@/modules/notification/fcm.validation";
 import { enqueuePushJob } from "@/modules/notification/service";
 import { env } from "@/config/env";
+import { notificationTokenLimiter } from "@/middleware/notificationTokenLimiter.middleware";
 
 const notificationRouter = Router();
 
@@ -65,6 +79,81 @@ notificationRouter.post(
   requirePermission("notification:send"),
   validate(sendNotificationSchema),
   send
+);
+
+notificationRouter.post(
+  "/register-token",
+  authMiddleware,
+  allowRoles(
+    "SUPER_ADMIN",
+    "ADMIN",
+    "ACADEMIC_SUB_ADMIN",
+    "FINANCE_SUB_ADMIN",
+    "TEACHER",
+    "PARENT",
+    "STUDENT"
+  ),
+  allowNotificationUpdate,
+  notificationTokenLimiter,
+  validate(registerTokenSchema),
+  registerToken
+);
+
+notificationRouter.post(
+  "/remove-token",
+  authMiddleware,
+  allowRoles(
+    "SUPER_ADMIN",
+    "ADMIN",
+    "ACADEMIC_SUB_ADMIN",
+    "FINANCE_SUB_ADMIN",
+    "TEACHER",
+    "PARENT",
+    "STUDENT"
+  ),
+  allowNotificationUpdate,
+  notificationTokenLimiter,
+  validate(removeTokenSchema),
+  removeToken
+);
+
+// Public (non-auth) endpoint: service worker uses this to bootstrap Firebase app.
+notificationRouter.get("/fcm/web-config", getFirebaseWebConfig);
+
+notificationRouter.post(
+  "/fcm/register",
+  authMiddleware,
+  allowRoles(
+    "SUPER_ADMIN",
+    "ADMIN",
+    "ACADEMIC_SUB_ADMIN",
+    "FINANCE_SUB_ADMIN",
+    "TEACHER",
+    "PARENT",
+    "STUDENT"
+  ),
+  allowNotificationUpdate,
+  notificationTokenLimiter,
+  validate(registerFcmSchema),
+  registerFcm
+);
+
+notificationRouter.post(
+  "/fcm/unregister",
+  authMiddleware,
+  allowRoles(
+    "SUPER_ADMIN",
+    "ADMIN",
+    "ACADEMIC_SUB_ADMIN",
+    "FINANCE_SUB_ADMIN",
+    "TEACHER",
+    "PARENT",
+    "STUDENT"
+  ),
+  allowNotificationUpdate,
+  notificationTokenLimiter,
+  validate(unregisterFcmSchema),
+  unregisterFcm
 );
 
 notificationRouter.post(

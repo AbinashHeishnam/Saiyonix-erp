@@ -106,13 +106,19 @@ async function notifyThresholdDrops(params: {
       await triggerNotification("STUDENT_ALERT", {
         schoolId: params.schoolId,
         studentId: params.studentId,
-        title: "Attendance Warning",
+        title: "Attendance Update",
         body:
           threshold === 75
-            ? "Attendance dropped below 75%. Detention risk warning."
-            : `Attendance dropped below ${threshold}%. Please monitor attendance.`,
+            ? "Attendance threshold dropped below 75%"
+            : `Attendance threshold dropped below ${threshold}%`,
         sentById: params.actorUserId,
+        entityType: "ATTENDANCE",
+        entityId: params.studentId,
+        linkUrl: "/attendance",
         metadata: {
+          type: "attendance",
+          studentId: params.studentId,
+          status: "WARNING",
           eventType: "ATTENDANCE_THRESHOLD",
           threshold,
           beforePercentage: beforePct,
@@ -138,12 +144,17 @@ async function notifyAbsence(params: {
   await triggerNotification("STUDENT_ALERT", {
     schoolId: params.schoolId,
     studentId: params.studentId,
-    title: "Student Marked Absent",
-    body: `Student marked absent on ${dateLabel}.`,
+    title: "Attendance Update",
+    body: "Marked Absent",
     sentById: params.actorUserId,
+    entityType: "ATTENDANCE",
+    entityId: params.studentId,
+    linkUrl: "/attendance",
     metadata: {
-      eventType: "ATTENDANCE_ABSENT",
-      attendanceDate: dateLabel,
+      type: "attendance",
+      studentId: params.studentId,
+      status: "ABSENT",
+      date: dateLabel,
     },
   });
 }

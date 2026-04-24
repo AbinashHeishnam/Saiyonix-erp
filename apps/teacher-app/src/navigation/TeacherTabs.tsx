@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { getUnreadCount } from "@saiyonix/api";
+import { useAuth } from "@saiyonix/auth";
 import { LoadingState, colors, typography } from "@saiyonix/ui";
 import { View } from "react-native";
 
@@ -52,9 +53,11 @@ const Tab = createBottomTabNavigator<TeacherTabParamList>();
 const Stack = createNativeStackNavigator<TeacherStackParamList>();
 
 function Tabs() {
+  const { user, isLoading } = useAuth();
   const unreadQuery = useQuery({
     queryKey: ["notification-unread-count"],
     queryFn: getUnreadCount,
+    enabled: Boolean(user) && !isLoading,
   });
   const unreadCount = typeof unreadQuery.data?.count === "number" ? unreadQuery.data.count : 0;
 

@@ -20,7 +20,7 @@ const OTP_EXPIRY_MS = 5 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 3;
 const OTP_COOLDOWN_MS = 10 * 60 * 1000;
 const OTP_RESEND_COOLDOWN_MS = 30 * 1000;
-const REFRESH_TOKEN_TTL_DAYS = 7;
+const REFRESH_TOKEN_TTL_DAYS = 30;
 
 async function ensureOtpDeliveryConfigured() {
   if (process.env.NODE_ENV === "production") {

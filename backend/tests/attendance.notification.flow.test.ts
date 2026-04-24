@@ -59,14 +59,18 @@ describe("attendance -> notification flow", () => {
       .mockResolvedValueOnce(1 as never)
       .mockResolvedValueOnce(0 as never);
 
-    mockedPrisma.student.findMany.mockResolvedValue([
-      {
-        userId: "student-user",
-        parentLinks: [
-          { parent: { userId: "parent-user", schoolId } },
-        ],
-      },
+    mockedPrisma.school.findUnique.mockResolvedValue({ timezone: "Asia/Kolkata" } as never);
+    mockedPrisma.student.findFirst.mockResolvedValue({ userId: "student-user" } as never);
+    mockedPrisma.parentStudentLink.findMany.mockResolvedValue([
+      { parent: { userId: "parent-user" } },
     ] as never);
+
+    mockedPrisma.user.findUnique.mockResolvedValue({ id: "teacher-user", schoolId } as never);
+    mockedPrisma.user.findMany.mockResolvedValue([
+      { id: "student-user" },
+      { id: "parent-user" },
+    ] as never);
+    mockedPrisma.notificationRecipient.findMany.mockResolvedValue([] as never);
 
     mockedPrisma.notification.create.mockResolvedValue({ id: "notif-1" } as never);
     mockedPrisma.notificationRecipient.createMany.mockResolvedValue({ count: 2 } as never);
@@ -89,7 +93,7 @@ describe("attendance -> notification flow", () => {
     expect(mockedPrisma.notification.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          title: "Student Marked Absent",
+          title: "Attendance Update",
         }),
       })
     );

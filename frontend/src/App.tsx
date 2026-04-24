@@ -2,6 +2,7 @@ import { Toaster } from "react-hot-toast";
 import { AuthProvider } from "./contexts/AuthContext";
 import AppRoutes from "./routes/AppRoutes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import FcmBootstrapper from "./notifications/FcmBootstrapper";
 
 const queryClient = new QueryClient();
 
@@ -9,6 +10,11 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+
+        {/* 🔥 FCM must mount early */}
+        <FcmBootstrapper />
+
+        {/* UI */}
         <Toaster
           position="top-center"
           toastOptions={{
@@ -24,6 +30,7 @@ export default function App() {
             },
           }}
         />
+
         <AppRoutes />
       </AuthProvider>
     </QueryClientProvider>

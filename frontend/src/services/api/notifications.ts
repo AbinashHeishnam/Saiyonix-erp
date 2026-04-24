@@ -42,3 +42,13 @@ export async function getUnreadCount() {
   const res = await api.get("/notifications/unread-count");
   return res.data?.data ?? res.data;
 }
+
+export async function registerFcmToken(token: string) {
+  const res = await api.post("/notifications/fcm/register", { token });
+  return res.data?.data ?? res.data;
+}
+
+export async function unregisterFcmToken(token: string) {
+  const res = await api.post("/notifications/fcm/unregister", { token });
+  return res.data?.data ?? res.data;
+}

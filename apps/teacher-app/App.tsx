@@ -12,6 +12,9 @@ import { Sora_400Regular, Sora_600SemiBold, Sora_700Bold } from "@expo-google-fo
 
 import { AuthProvider } from "@saiyonix/auth";
 import RootNavigator from "./src/navigation/RootNavigator";
+import { navigationRef } from "./src/navigation/navigationRef";
+import PushBootstrapper from "./src/notifications/PushBootstrapper";
+import { initPushNotifications } from "./src/services/pushNotifications";
 
 SplashScreen.preventAutoHideAsync().catch(() => null);
 
@@ -33,6 +36,25 @@ export default function App() {
     }
   }, [fontsLoaded, fontError]);
 
+  useEffect(() => {
+    let detach: null | (() => void) = null;
+    void initPushNotifications()
+      .then((cleanup) => {
+        detach = cleanup;
+      })
+      .catch((err) => {
+        console.error("[PUSH] INIT FAILED:", err);
+        if (__DEV__) {
+          setTimeout(() => {
+            throw err;
+          }, 0);
+        }
+      });
+    return () => {
+      detach?.();
+    };
+  }, []);
+
   if (!fontsLoaded && !fontError) {
     return null;
   }
@@ -43,7 +65,8 @@ export default function App() {
         <StatusBar barStyle="dark-content" />
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <NavigationContainer>
+            <NavigationContainer ref={navigationRef}>
+              <PushBootstrapper />
               <RootNavigator />
             </NavigationContainer>
           </AuthProvider>

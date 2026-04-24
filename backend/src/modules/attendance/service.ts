@@ -15,7 +15,7 @@ import { chunkArray } from "@/core/utils/perf";
 import { logAudit } from "@/utils/audit";
 import { PRESENT_STATUSES } from "@/modules/attendance/summaries/service";
 import type { AttendanceActor, AttendanceCounts } from "@/modules/attendance/types";
-import { notifyAbsence, notifyThresholdDrop } from "@/modules/attendance/notifications";
+import { notifyAbsence, notifyAttendanceMarked, notifyThresholdDrop } from "@/modules/attendance/notifications";
 import type { CreateAttendanceInput, UpdateAttendanceInput } from "@/modules/attendance/validation";
 import { assertAttendanceAllowed, isAttendanceAllowed } from "@/modules/academicCalendar/service";
 
@@ -746,14 +746,13 @@ export async function markAttendance(
   });
 
   for (const entry of created) {
-    if (entry.status === "ABSENT") {
-      await notifyAbsence({
-        schoolId,
-        studentId: entry.studentId,
-        attendanceDate,
-        actorUserId: userId,
-      });
-    }
+    await notifyAttendanceMarked({
+      schoolId,
+      studentId: entry.studentId,
+      attendanceDate,
+      status: entry.status,
+      actorUserId: userId,
+    });
 
     const countsAfter = await getAttendanceCounts(
       prisma,

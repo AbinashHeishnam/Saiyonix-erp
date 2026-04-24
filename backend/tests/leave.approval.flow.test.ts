@@ -5,16 +5,10 @@ vi.mock("../src/config/prisma", () => ({
   default: createMockPrisma(),
 }));
 
-vi.mock("../src/core/queue/notificationQueue", () => ({
-  enqueueNotificationJob: vi.fn(),
-}));
-
 import prisma from "../src/config/prisma";
-import { enqueueNotificationJob } from "../src/core/queue/notificationQueue";
 import { approveStudentLeave, createStudentLeave } from "../src/modules/studentLeave/service";
 
 const mockedPrisma = vi.mocked(prisma, true);
-const mockedEnqueue = vi.mocked(enqueueNotificationJob);
 
 const schoolId = "school-1";
 
@@ -64,10 +58,24 @@ describe("leave approval flow", () => {
       .mockResolvedValueOnce({ sectionId: "section-1" } as never)
       .mockResolvedValueOnce({ sectionId: "section-1", academicYearId: "ay-1" } as never);
 
-    mockedPrisma.user.findMany
-      .mockResolvedValueOnce([{ id: "admin-1" }] as never)
-      .mockResolvedValueOnce([{ id: "admin-1" }, { id: "teacher-user" }] as never)
-      .mockResolvedValueOnce([{ id: "student-user" }] as never);
+    mockedPrisma.user.findUnique.mockImplementation(async (args) => {
+      const id = (args as { where?: { id?: string } }).where?.id ?? null;
+      if (!id) return null as never;
+      return { id, schoolId } as never;
+    });
+
+    mockedPrisma.user.findMany.mockImplementation(async (args) => {
+      const where = (args as { where?: any }).where ?? {};
+      const roles = where?.role?.roleType?.in;
+      if (Array.isArray(roles)) {
+        return [{ id: "admin-1" }] as never;
+      }
+      const ids = where?.id?.in;
+      if (Array.isArray(ids)) {
+        return ids.map((id: string) => ({ id })) as never;
+      }
+      return [] as never;
+    });
 
     mockedPrisma.teacher.findFirst.mockResolvedValue({ id: "teacher-1" } as never);
     mockedPrisma.section.findFirst
@@ -85,6 +93,8 @@ describe("leave approval flow", () => {
     mockedPrisma.studentAttendance.findMany.mockResolvedValue([] as never);
     mockedPrisma.studentAttendance.createMany.mockResolvedValue({ count: 1 } as never);
 
+    mockedPrisma.parentStudentLink.findMany.mockResolvedValue([] as never);
+    mockedPrisma.notificationRecipient.findMany.mockResolvedValue([] as never);
     mockedPrisma.notification.create.mockResolvedValue({ id: "notif-1" } as never);
     mockedPrisma.notificationRecipient.createMany.mockResolvedValue({ count: 1 } as never);
   });
@@ -124,11 +134,6 @@ describe("leave approval flow", () => {
         data: expect.arrayContaining([
           expect.objectContaining({ userId: "student-user" }),
         ]),
-      })
-    );
-    expect(mockedEnqueue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userIds: ["student-user"],
       })
     );
   });

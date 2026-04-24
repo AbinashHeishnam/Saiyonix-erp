@@ -5,8 +5,8 @@ import { ApiError } from "@/core/errors/apiError";
 import { normalizeDate } from "@/core/utils/date";
 import { safeRedisDel } from "@/core/cache/invalidate";
 import { logAudit } from "@/utils/audit";
-import { trigger as triggerNotification } from "@/modules/notification/service";
 import { generateSubstitutions } from "@/modules/substitution/service";
+import { createAndDispatchNotification } from "@/services/notificationEngine";
 import type { ApplyTeacherLeaveInput, CreateTeacherLeaveInput } from "@/modules/teacherLeave/validation";
 
 type ActorContext = {
@@ -103,19 +103,6 @@ async function resolveTeacherLeaveScope(
   throw new ApiError(403, "Forbidden");
 }
 
-async function resolveAdminUserIds(schoolId: string): Promise<string[]> {
-  const users = await prisma.user.findMany({
-    where: {
-      schoolId,
-      isActive: true,
-      role: { roleType: { in: ["ADMIN", "ACADEMIC_SUB_ADMIN"] } },
-    },
-    select: { id: true },
-  });
-
-  return users.map((user) => user.id);
-}
-
 export async function createTeacherLeave(
   schoolId: string,
   payload: CreateTeacherLeaveInput,
@@ -158,29 +145,22 @@ export async function createTeacherLeave(
     },
   });
 
-  const approvers = await resolveAdminUserIds(schoolId);
-  if (approvers.length > 0) {
-    await triggerNotification("LEAVE_REQUEST_SUBMITTED", {
-      schoolId,
-      userIds: approvers,
-      title: "Leave Request Submitted",
-      body: "A new teacher leave request is awaiting approval.",
-      sentById: userId,
+  await createAndDispatchNotification({
+    type: "TEACHER_LEAVE_APPLIED",
+    title: "Leave Request Submitted",
+    message: "A new teacher leave request is awaiting approval.",
+    senderId: userId,
+    targetType: "ROLE",
+    role: "ADMIN",
+    meta: {
       entityType: "TEACHER_LEAVE",
       entityId: leave.id,
+      leaveId: leave.id,
+      teacherId,
+      leaveType: payload.leaveType ?? null,
       linkUrl: "/admin/teacher-leaves",
-      metadata: {
-        eventType: "LEAVE_REQUEST_SUBMITTED",
-        leaveId: leave.id,
-        teacherId,
-        leaveType: payload.leaveType ?? null,
-        routes: {
-          ADMIN: "/admin/teacher-leaves",
-          ACADEMIC_SUB_ADMIN: "/admin/teacher-leaves",
-        },
-      },
-    });
-  }
+    },
+  });
 
   return leave;
 }
@@ -367,35 +347,22 @@ async function updateTeacherLeaveStatus(
   });
 
   if (leave.teacher.userId) {
-    await triggerNotification(
-      status === LeaveStatus.APPROVED
-        ? "LEAVE_REQUEST_APPROVED"
-        : "LEAVE_REQUEST_REJECTED",
-      {
-        schoolId,
-        userIds: [leave.teacher.userId],
-        title: `Leave ${status === LeaveStatus.APPROVED ? "Approved" : "Rejected"}`,
-        body: `Your leave request has been ${
-          status === LeaveStatus.APPROVED ? "approved" : "rejected"
-        }.`,
-        sentById: userId,
+    await createAndDispatchNotification({
+      type: status === LeaveStatus.APPROVED ? "TEACHER_LEAVE_APPROVED" : "TEACHER_LEAVE_REJECTED",
+      title: `Leave ${status === LeaveStatus.APPROVED ? "Approved" : "Rejected"}`,
+      message: `Your leave request has been ${status === LeaveStatus.APPROVED ? "approved" : "rejected"}.`,
+      senderId: userId,
+      targetType: "USER",
+      userIds: [leave.teacher.userId],
+      meta: {
         entityType: "TEACHER_LEAVE",
         entityId: leave.id,
+        leaveId: leave.id,
+        teacherId: leave.teacher.id,
+        leaveType: leave.leaveType ?? null,
         linkUrl: "/teacher/leave",
-        metadata: {
-          eventType:
-            status === LeaveStatus.APPROVED
-              ? "LEAVE_REQUEST_APPROVED"
-              : "LEAVE_REQUEST_REJECTED",
-          leaveId: leave.id,
-          teacherId: leave.teacher.id,
-          leaveType: leave.leaveType ?? null,
-          routes: {
-            TEACHER: "/teacher/leave",
-          },
-        },
-      }
-    );
+      },
+    });
   }
 
   try {
@@ -481,29 +448,23 @@ export async function cancelTeacherLeave(
     },
   });
 
-  const approvers = await resolveAdminUserIds(schoolId);
-  if (approvers.length > 0) {
-    await triggerNotification("LEAVE_REQUEST_CANCELLED", {
-      schoolId,
-      userIds: approvers,
-      title: "Leave Request Cancelled",
-      body: "A teacher leave request has been cancelled.",
-      sentById: userId,
+  await createAndDispatchNotification({
+    type: "TEACHER_LEAVE_APPLIED",
+    title: "Leave Request Cancelled",
+    message: "A teacher leave request has been cancelled.",
+    senderId: userId,
+    targetType: "ROLE",
+    role: "ADMIN",
+    meta: {
       entityType: "TEACHER_LEAVE",
       entityId: leave.id,
+      leaveId: leave.id,
+      teacherId: leave.teacher.id,
+      leaveType: leave.leaveType ?? null,
       linkUrl: "/admin/teacher-leaves",
-      metadata: {
-        eventType: "LEAVE_REQUEST_CANCELLED",
-        leaveId: leave.id,
-        teacherId: leave.teacher.id,
-        leaveType: leave.leaveType ?? null,
-        routes: {
-          ADMIN: "/admin/teacher-leaves",
-          ACADEMIC_SUB_ADMIN: "/admin/teacher-leaves",
-        },
-      },
-    });
-  }
+      eventType: "LEAVE_REQUEST_CANCELLED",
+    },
+  });
 
   return updated;
 }

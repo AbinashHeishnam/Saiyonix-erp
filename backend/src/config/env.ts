@@ -71,6 +71,25 @@ const envSchema = z.object({
   STORAGE_REGION: z.string().optional(),
   STORAGE_ACCESS_KEY: z.string().optional(),
   STORAGE_SECRET_KEY: z.string().optional(),
+  EXPO_ACCESS_TOKEN: z.string().optional(),
+  EXPO_PROJECT_ID: z.string().optional(),
+
+  // Firebase Admin (backend -> FCM)
+  // Prefer a full service account JSON in a single env var for container deployments.
+  FIREBASE_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  // Fallback: split env vars (useful for secret managers).
+  FIREBASE_PROJECT_ID: z.string().optional(),
+  FIREBASE_CLIENT_EMAIL: z.string().optional(),
+  FIREBASE_PRIVATE_KEY: z.string().optional(),
+
+  // Firebase Web config (public; used by web SW + web app init)
+  // Example:
+  // {"apiKey":"...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}
+  FIREBASE_WEB_CONFIG_JSON: z.string().optional(),
+
+  // Firebase Web Push (VAPID) public key (public; required by getToken() for web push)
+  // Public VAPID key from Firebase Console → Cloud Messaging → Web push certificates.
+  FIREBASE_VAPID_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -8,6 +8,12 @@ import prisma from "@/core/db/prisma";
 import { withTimeout } from "@/core/utils/timeout";
 import { withConsoleTime } from "@/core/utils/perf";
 import { sendPush } from "@/core/push/pushProvider";
+import {
+  aggregateNotificationDelivery,
+  cleanupPushTokens,
+  deliverQueuedNotification,
+  markNotificationDeliveryFailed,
+} from "@/services/notificationService";
 import { publishResults, recomputeResults } from "@/modules/results/service";
 import { recomputeRanking } from "@/modules/ranking/service";
 import { bulkGeneratePDFs, generateAdmitCardsForExam } from "@/modules/admitCards/service";
@@ -21,6 +27,7 @@ const queueMetricsIntervalMs = Number(process.env.QUEUE_METRICS_INTERVAL_MS ?? 3
 
 let jobWorker: Worker | null = null;
 let notificationWorker: Worker | null = null;
+let notificationDlqQueue: Queue | null = null;
 
 export async function getJobWorker() {
   if (jobWorker) {
@@ -119,6 +126,39 @@ export async function getJobWorker() {
               )
             );
             break;
+          case "NOTIFICATION_MONITOR":
+            await withConsoleTime(`job:notification-monitor:${payload.schoolId}`, async () => {
+              const summary = await aggregateNotificationDelivery({
+                schoolId: payload.schoolId,
+                windowMinutes: 5,
+              });
+              const pct = Math.round(summary.failureRate * 1000) / 10;
+              const line = `[NOTIFICATION_MONITOR] school=${payload.schoolId} since=${summary.since} sent=${summary.sent} failed=${summary.failed} invalid=${summary.invalid} total=${summary.total} failedPct=${pct}%`;
+              if (summary.total >= 20 && summary.failureRate > 0.2) {
+                console.error(`[CRITICAL] ${line}`);
+                try {
+                  const prismaAny = prisma as any;
+                  await prismaAny.systemAlert.create({
+                    data: {
+                      type: "NOTIFICATION_FAILURE",
+                      severity: "CRITICAL",
+                      schoolId: payload.schoolId,
+                      message: line,
+                    },
+                  });
+                } catch (error) {
+                  console.error("[NOTIFICATION_MONITOR] alert persist failed", error);
+                }
+              } else {
+                console.log(line);
+              }
+            });
+            break;
+          case "PUSH_TOKEN_CLEANUP":
+            await withConsoleTime(`job:push-token-cleanup:${payload.schoolId}`, async () =>
+              withTimeout(cleanupPushTokens({ schoolId: payload.schoolId }), 30_000, "Push token cleanup")
+            );
+            break;
           default:
             break;
         }
@@ -200,11 +240,23 @@ export async function getNotificationWorker() {
     return null;
   }
 
+  if (!notificationDlqQueue) {
+    notificationDlqQueue = new Queue("notification-dlq", {
+      connection,
+      defaultJobOptions: {
+        attempts: 1,
+        removeOnComplete: false,
+        removeOnFail: false,
+      },
+    });
+  }
+
   notificationWorker = new Worker(
     "notifications",
     async (job) => {
       try {
         const data = job.data as {
+          notificationId?: string;
           userId?: string;
           userIds?: string[];
           message?: string;
@@ -212,6 +264,12 @@ export async function getNotificationWorker() {
           body?: string;
           schoolId?: string;
         };
+
+        if (typeof data.notificationId === "string" && data.notificationId.trim().length > 0) {
+          await deliverQueuedNotification({ notificationId: data.notificationId });
+          return;
+        }
+
         const users = data.userIds ?? (data.userId ? [data.userId] : []);
         const validUsers = (users || []).filter(
           (id) => typeof id === "string" && id.trim().length > 0
@@ -220,11 +278,10 @@ export async function getNotificationWorker() {
         const title = data.title ?? "Notification";
         const schoolId = data.schoolId;
 
-        if (!validUsers.length) {
-          console.warn("[notification-worker] No valid users, skipping job");
+        if (!validUsers.length || !schoolId) {
+          console.warn("[notification-worker] No valid users or schoolId, skipping legacy job");
           return;
         }
-        if (!schoolId) return;
 
         await sendPush({
           schoolId,
@@ -243,6 +300,41 @@ export async function getNotificationWorker() {
 
   notificationWorker.on("error", (err) => {
     console.error("[notification-worker] error", err);
+  });
+
+  notificationWorker.on("failed", async (job, err) => {
+    try {
+      if (!job) return;
+      const data = job.data as { notificationId?: string };
+      const maxAttempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
+      const isFinalFailure = (job.attemptsMade ?? 0) >= maxAttempts;
+
+      if (data?.notificationId && isFinalFailure) {
+        try {
+          await notificationDlqQueue?.add(
+            "FAILED_NOTIFICATION",
+            {
+              notificationId: data.notificationId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            {
+              attempts: 1,
+              removeOnComplete: false,
+              removeOnFail: false,
+            }
+          );
+        } catch (dlqError) {
+          console.error("[notification-worker] dlq enqueue error", dlqError);
+        }
+
+        await markNotificationDeliveryFailed(
+          data.notificationId,
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    } catch (error) {
+      console.error("[notification-worker] failed handler error", error);
+    }
   });
 
   return notificationWorker;

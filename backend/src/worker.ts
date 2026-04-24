@@ -39,6 +39,24 @@ async function setupRepeatableJobs() {
         repeat: { every: 60 * 60 * 1000 },
       }
     );
+
+    await jobQueue.add(
+      "NOTIFICATION_MONITOR",
+      { type: "NOTIFICATION_MONITOR", schoolId: school.id },
+      {
+        jobId: `notification-monitor:${school.id}`,
+        repeat: { every: 5 * 60 * 1000 },
+      }
+    );
+
+    await jobQueue.add(
+      "PUSH_TOKEN_CLEANUP",
+      { type: "PUSH_TOKEN_CLEANUP", schoolId: school.id },
+      {
+        jobId: `push-token-cleanup:${school.id}`,
+        repeat: { every: 24 * 60 * 60 * 1000 },
+      }
+    );
   }
 
   setInterval(async () => {

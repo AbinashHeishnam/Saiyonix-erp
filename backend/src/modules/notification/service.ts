@@ -5,6 +5,11 @@ import { getSmsConfig } from "@/core/config/externalServices";
 import { ApiError } from "@/core/errors/apiError";
 import { getNotificationQueue } from "@/core/queue/notificationBullmq";
 import { sendSMS } from "@/core/services/sms.service";
+import {
+  queueNotificationDelivery,
+  registerPushToken as registerPushTokenRecord,
+  removePushToken as removePushTokenRecord,
+} from "@/services/notificationService";
 import { logAudit } from "@/utils/audit";
 import { chunkArray } from "@/core/utils/perf";
 import { eventConfig } from "@/modules/notification/eventConfig";
@@ -18,16 +23,18 @@ type NotificationRecipientWithNotification = Prisma.NotificationRecipientGetPayl
     id: true;
     readAt: true;
     createdAt: true;
-    notification: {
-      select: {
-        id: true;
-        title: true;
-        body: true;
-        category: true;
-        priority: true;
-        sentAt: true;
-        createdAt: true;
-      };
+        notification: {
+          select: {
+            id: true;
+            title: true;
+            body: true;
+            type: true;
+            data: true;
+            category: true;
+            priority: true;
+            sentAt: true;
+            createdAt: true;
+          };
     };
   };
 }>;
@@ -62,6 +69,7 @@ function ensureSchoolId(payload: NotificationPayload): string {
 }
 
 export async function enqueuePushJob(payload: {
+  notificationId?: string;
   userIds: string[];
   message: string;
   title?: string;
@@ -75,6 +83,7 @@ export async function enqueuePushJob(payload: {
       return false;
     }
     await queue.add("notify", {
+      notificationId: payload.notificationId ?? null,
       userIds: payload.userIds,
       message: payload.message,
       title: payload.title ?? null,
@@ -115,9 +124,16 @@ export async function trigger(
     const created = await tx.notification.create({
       data: {
         schoolId,
+        type:
+          payload.metadata?.type === "attendance"
+            ? "ATTENDANCE"
+            : payload.metadata?.type === "notice"
+              ? "NOTICE"
+              : "GENERAL",
         eventType,
         title,
         body,
+        data: payload.metadata ?? undefined,
         category: config.category ?? null,
         priority: config.priority,
         sentVia: config.deliveryChannels,
@@ -170,16 +186,7 @@ export async function trigger(
 
   if (config.deliveryChannels.includes("PUSH")) {
     try {
-      const queued = await enqueuePushJob({
-        userIds: recipients,
-        message: body,
-        title,
-        body,
-        schoolId,
-      });
-      if (!queued) {
-        throw new Error("Queue failed — no fallback allowed");
-      }
+      await queueNotificationDelivery(notification.id);
     } catch {
       throw new Error("Queue failed — no fallback allowed");
     }
@@ -295,9 +302,16 @@ export async function sendNotification(
       const created = await tx.notification.create({
         data: {
           schoolId,
+          type:
+            payload.metadata?.type === "attendance"
+              ? "ATTENDANCE"
+              : payload.metadata?.type === "notice"
+                ? "NOTICE"
+                : "GENERAL",
           eventType: payload.category ? `MANUAL_${payload.category}` : "MANUAL",
           title: payload.title,
           body: payload.body,
+          data: payload.metadata ?? undefined,
           category: payload.category ?? null,
           priority: payload.priority,
           sentVia: deliveryChannels,
@@ -352,16 +366,7 @@ export async function sendNotification(
 
     if (deliveryChannels.includes("PUSH")) {
       try {
-        const queued = await enqueuePushJob({
-          userIds: recipients,
-          message: payload.body,
-          title: payload.title,
-          body: payload.body,
-          schoolId,
-        });
-        if (!queued) {
-          throw new Error("Queue failed — no fallback allowed");
-        }
+        await queueNotificationDelivery(notification.id);
       } catch {
         throw new Error("Queue failed — no fallback allowed");
       }
@@ -430,6 +435,8 @@ export async function listNotifications(
             id: true,
             title: true,
             body: true,
+            type: true,
+            data: true,
             category: true,
             priority: true,
             eventType: true,
@@ -498,4 +505,22 @@ export async function markAllRead(
   });
 
   return { updated: result.count, readAt: now };
+}
+
+export async function registerPushToken(params: {
+  schoolId: string;
+  userId: string;
+  token: string;
+  platform: "EXPO" | "FCM";
+  deviceInfo?: Prisma.InputJsonValue;
+}) {
+  return registerPushTokenRecord(params);
+}
+
+export async function removePushToken(params: {
+  schoolId: string;
+  userId: string;
+  token: string;
+}) {
+  return removePushTokenRecord(params);
 }

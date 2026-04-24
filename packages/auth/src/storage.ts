@@ -3,6 +3,7 @@ import * as SecureStore from "expo-secure-store";
 
 const SESSION_KEY = "saiyonix.session";
 const TOKENS_KEY = "saiyonix.tokens";
+const PUSH_TOKEN_KEY = "saiyonix.pushToken";
 
 async function safeGetItem(key: string) {
   try {
@@ -91,4 +92,26 @@ export async function saveTokens(data: StoredTokens) {
 
 export async function clearTokens() {
   await safeRemoveItem(TOKENS_KEY);
+}
+
+export async function loadPushToken() {
+  const raw = await safeGetItem(PUSH_TOKEN_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const token = (parsed as { token?: unknown }).token;
+    if (typeof token !== "string" || token.length < 10) return null;
+    return { token };
+  } catch {
+    return null;
+  }
+}
+
+export async function savePushToken(data: { token: string }) {
+  await safeSetItem(PUSH_TOKEN_KEY, JSON.stringify({ token: data.token }));
+}
+
+export async function clearPushToken() {
+  await safeRemoveItem(PUSH_TOKEN_KEY);
 }
