@@ -351,7 +351,7 @@ export async function queueNotificationDelivery(notificationId: string) {
   logger.info(`[trace] 🔥 ADDING JOB TO QUEUE notificationId=${notificationId}`);
   console.log("[QUEUE] adding job");
   await queue.add("deliver-notification", { notificationId } satisfies DeliveryJobPayload, {
-    jobId: `notification:${notificationId}`,
+    jobId: `notif_${notificationId.replace(/[^a-zA-Z0-9_-]/g, "")}`,
     attempts: 5,
     backoff: {
       type: "exponential",
