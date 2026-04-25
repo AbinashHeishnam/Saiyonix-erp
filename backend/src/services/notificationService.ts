@@ -508,16 +508,11 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
 
   // Expo batch send (reduces request count dramatically for large fanout).
   if (expoItems.length > 0) {
-    function getProjectFromExpoToken(token: string): string {
+    logger.info(`[push] entering grouped send, totalItems=${expoItems.length}`);
+
+    function extractScopeKey(token: string): string | null {
       const match = token.match(/(.*?)/);
-      if (match?.[1]) return match[1];
-
-      // Fallback for typical Expo tokens formatted as ExponentPushToken[...]
-      // (still token-derived; no deviceInfo usage).
-      const bracketMatch = token.match(/\[(.*?)\]/);
-      if (bracketMatch?.[1]) return bracketMatch[1];
-
-      return "invalid";
+      return match ? match[1] : null;
     }
 
     const sendExpo = async (messages: ExpoPushMessage[]) =>
@@ -525,25 +520,9 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
 
     const groups = new Map<string, typeof expoItems>();
     for (const item of expoItems) {
-      const project = getProjectFromExpoToken(item.expoToken);
-      if (project === "invalid") {
-        logger.error(`[push] failed to parse project from Expo token pushTokenId=${item.pushTokenId}`);
-        const stats = getStats(item.recipientId);
-        stats.skipped += 1;
-        await createLog({
-          schoolId: notification.schoolId,
-          notificationId: notification.id,
-          recipientId: item.recipientId,
-          userId: item.userId,
-          pushTokenId: item.pushTokenId,
-          channel: "MOBILE_PUSH",
-          platform: "EXPO",
-          status: "FAILED",
-          errorCode: "EXPO_PROJECT_PARSE_FAILED",
-          errorMessage: "Could not extract project key from Expo token",
-        }).catch((logError) => {
-          logger.error("[NOTIFICATION] failed to write expo failure log", logError);
-        });
+      const project = extractScopeKey(item.expoToken);
+      if (!project) {
+        logger.error(`[push] INVALID TOKEN FORMAT: ${item.expoToken}`);
         continue;
       }
 
@@ -555,16 +534,20 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
       }
     }
 
-    logger.info(`[push] grouped tokens: ${groups.size}`);
-    for (const [project, items] of groups) {
-      logger.info(`[push] project=${project} tokens=${items.length}`);
+    if (groups.size === 0) {
+      throw new Error("No valid Expo project groups formed");
     }
 
+    if (expoItems.length > 0 && groups.size === 1) {
+      const project = [...groups.keys()][0];
+      logger.warn(`[push] only one group detected: ${project}`);
+    }
+
+    logger.info(`[push] grouped tokens: ${groups.size}`);
     for (const [project, items] of groups) {
       if (items.length === 0) continue;
 
       logger.info(`[push] sending project=${project} tokens=${items.length}`);
-      logger.info(`[push] sending batch project=${project} count=${items.length}`);
 
       const messages: ExpoPushMessage[] = items.map((item) => ({
         to: item.expoToken,
@@ -584,123 +567,6 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
         try {
           tickets = await sendExpo(chunk);
         } catch (error) {
-          if (String(error).includes("PUSH_TOO_MANY_EXPERIENCE_IDS")) {
-            logger.warn("[push] fallback: splitting into single sends");
-
-            await Promise.all(
-              chunkItems.map(async (single) => {
-                const stats = getStats(single.recipientId);
-                const message: ExpoPushMessage = {
-                  to: single.expoToken,
-                  title: notification.title,
-                  body: notification.body,
-                  data: single.data,
-                  sound: "default",
-                  priority: "high",
-                };
-
-                let singleTickets: ExpoPushTicket[];
-                try {
-                  singleTickets = await sendExpo([message]);
-                } catch (e) {
-                  transientFailures += 1;
-                  stats.failed += 1;
-                  await createLog({
-                    schoolId: notification.schoolId,
-                    notificationId: notification.id,
-                    recipientId: single.recipientId,
-                    userId: single.userId,
-                    pushTokenId: single.pushTokenId,
-                    channel: "MOBILE_PUSH",
-                    platform: "EXPO",
-                    status: "FAILED",
-                    errorCode:
-                      e instanceof Error && e.message === "Push timeout"
-                        ? "PUSH_TIMEOUT"
-                        : "EXPO_PUSH_FAILED",
-                    errorMessage: e instanceof Error ? e.message : String(e),
-                  }).catch((logError) => {
-                    logger.error("[NOTIFICATION] failed to write expo failure log", logError);
-                  });
-                  return;
-                }
-
-                const ticket = singleTickets[0];
-                if (!ticket) {
-                  transientFailures += 1;
-                  stats.failed += 1;
-                  await createLog({
-                    schoolId: notification.schoolId,
-                    notificationId: notification.id,
-                    recipientId: single.recipientId,
-                    userId: single.userId,
-                    pushTokenId: single.pushTokenId,
-                    channel: "MOBILE_PUSH",
-                    platform: "EXPO",
-                    status: "FAILED",
-                    errorCode: "EXPO_PUSH_FAILED",
-                    errorMessage: "Missing Expo ticket",
-                  }).catch((logError) => {
-                    logger.error("[NOTIFICATION] failed to write expo failure log", logError);
-                  });
-                  return;
-                }
-
-                if (ticket.status === "ok") {
-                  stats.sent += 1;
-                  await createLog({
-                    schoolId: notification.schoolId,
-                    notificationId: notification.id,
-                    recipientId: single.recipientId,
-                    userId: single.userId,
-                    pushTokenId: single.pushTokenId,
-                    channel: "MOBILE_PUSH",
-                    platform: "EXPO",
-                    status: "SENT",
-                    providerMessageId: (ticket as ExpoPushSuccessTicket).id ?? null,
-                    deliveredAt: new Date(),
-                  }).catch((logError) => {
-                    logger.error("[NOTIFICATION] failed to write expo sent log", logError);
-                  });
-                  return;
-                }
-
-                stats.failed += 1;
-                const details = "details" in ticket && ticket.details ? ticket.details : undefined;
-                const errorCode =
-                  details && typeof details === "object" && "error" in details
-                    ? String(details.error)
-                    : ticket.message ?? "EXPO_PUSH_FAILED";
-                const invalidToken = errorCode === "DeviceNotRegistered";
-                if (invalidToken) {
-                  stats.invalid += 1;
-                  await invalidateToken(single.pushTokenId, errorCode).catch((invalidateError) => {
-                    logger.error("[NOTIFICATION] failed to invalidate expo token", invalidateError);
-                  });
-                } else {
-                  transientFailures += 1;
-                }
-
-                await createLog({
-                  schoolId: notification.schoolId,
-                  notificationId: notification.id,
-                  recipientId: single.recipientId,
-                  userId: single.userId,
-                  pushTokenId: single.pushTokenId,
-                  channel: "MOBILE_PUSH",
-                  platform: "EXPO",
-                  status: invalidToken ? "INVALID_TOKEN" : "FAILED",
-                  errorCode,
-                  errorMessage: ticket.message ?? null,
-                }).catch((logError) => {
-                  logger.error("[NOTIFICATION] failed to write expo failure log", logError);
-                });
-              })
-            );
-
-            continue;
-          }
-
           transientFailures += chunkItems.length;
           await Promise.all(
             chunkItems.map(async (item) => {
