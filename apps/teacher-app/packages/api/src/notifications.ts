@@ -28,9 +28,15 @@ export async function getUnreadCount() {
 export async function registerNotificationToken(input: {
   token: string;
   platform: "expo" | "fcm";
+  projectId?: string;
   deviceInfo?: unknown;
 }) {
   if (input.platform === "expo") {
+    const projectId = typeof input.projectId === "string" ? input.projectId.trim() : "";
+    if (!projectId) {
+      throw new Error("projectId is required when registering an Expo push token");
+    }
+
     const { accessToken } = getAuthTokens();
     const maskedAuth =
       typeof accessToken === "string" && accessToken.length > 16
@@ -42,13 +48,14 @@ export async function registerNotificationToken(input: {
     console.log("[PUSH][API] POST /notifications/register-token start", {
       hasAuth: Boolean(accessToken),
       authorization: maskedAuth,
-      payload: { token: input.token, platform: "expo", deviceInfo: input.deviceInfo },
+      payload: { token: input.token, platform: "expo", projectId, deviceInfo: input.deviceInfo },
     });
 
     try {
       const res = await api.post("/notifications/register-token", {
         token: input.token,
         platform: "expo",
+        projectId,
         deviceInfo: input.deviceInfo,
       });
       console.log("[PUSH][API] POST /notifications/register-token OK", {

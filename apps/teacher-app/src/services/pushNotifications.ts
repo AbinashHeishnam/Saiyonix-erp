@@ -107,22 +107,18 @@ export async function registerForPush() {
       }
 
       const projectId = resolveProjectId();
-      console.log("STEP 3 projectId:", projectId ?? "(missing)");
+      console.log("[PUSH] projectId:", projectId ?? "(missing)");
+      if (!projectId) {
+        const err = new Error("Missing EAS projectId; refusing to generate Expo push token without projectId.");
+        console.error("[PUSH] FATAL:", err.message);
+        throw err;
+      }
 
       let token: string | null = null;
       try {
-        if (projectId) {
-          const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-          console.log("[PUSH] getExpoPushTokenAsync response:", tokenData);
-          token = tokenData.data;
-        } else {
-          // Expo Go / legacy fallback. Works in some dev contexts, but we still log loudly
-          // because production builds should always have a projectId.
-          console.warn("[PUSH] Missing projectId; attempting getExpoPushTokenAsync() without projectId fallback.");
-          const tokenData = await Notifications.getExpoPushTokenAsync();
-          console.log("[PUSH] getExpoPushTokenAsync response:", tokenData);
-          token = tokenData.data;
-        }
+        const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+        console.log("[PUSH] getExpoPushTokenAsync response:", tokenData);
+        token = tokenData.data;
       } catch (err) {
         console.error("[PUSH] getExpoPushTokenAsync failed:", err);
         console.error(
@@ -231,11 +227,19 @@ export async function syncLastPushTokenToBackend() {
 
   console.log("[PUSH] Backend token sync start:", token);
   const config = getExpoConfig();
+  const projectId = resolveProjectId();
+  console.log("[PUSH] projectId:", projectId ?? "(missing)");
+  if (!projectId) {
+    const err = new Error("Missing EAS projectId; refusing to sync Expo push token without projectId.");
+    console.error("[PUSH] FATAL:", err.message);
+    throw err;
+  }
 
   try {
     console.log("[PUSH] Backend token sync request payload:", {
       token,
       platform: "expo",
+      projectId,
       deviceInfo: {
         platform: Platform.OS,
         appVersion: config?.version ?? null,
@@ -246,6 +250,7 @@ export async function syncLastPushTokenToBackend() {
     await registerNotificationToken({
       token,
       platform: "expo",
+      projectId,
       deviceInfo: {
         platform: Platform.OS,
         appVersion: config?.version ?? null,
