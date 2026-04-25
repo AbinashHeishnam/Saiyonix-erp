@@ -252,9 +252,35 @@ export async function getNotificationWorker() {
   }
 
   notificationWorker = new Worker(
-    "notifications",
+    "notification",
     async (job) => {
       try {
+        if (job.name === "deliver-notification") {
+          const data = job.data as { notificationId?: string };
+          const notificationId =
+            typeof data?.notificationId === "string" ? data.notificationId.trim() : "";
+
+          console.log(
+            `[notification-worker:received] name=${job.name} id=${job.id} notificationId=${notificationId || "n/a"}`
+          );
+
+          if (!notificationId) {
+            throw new Error("notificationId is required for deliver-notification");
+          }
+
+          await deliverQueuedNotification({ notificationId });
+
+          console.log(
+            `[notification-worker:processed] name=${job.name} id=${job.id} notificationId=${notificationId}`
+          );
+          return;
+        }
+
+        if (job.name !== "notify") {
+          console.log(`[notification-worker:ignored] name=${job.name} id=${job.id}`);
+          return;
+        }
+
         const data = job.data as {
           notificationId?: string;
           userId?: string;
@@ -266,7 +292,13 @@ export async function getNotificationWorker() {
         };
 
         if (typeof data.notificationId === "string" && data.notificationId.trim().length > 0) {
+          console.log(
+            `[notification-worker:received] name=${job.name} id=${job.id} notificationId=${data.notificationId.trim()}`
+          );
           await deliverQueuedNotification({ notificationId: data.notificationId });
+          console.log(
+            `[notification-worker:processed] name=${job.name} id=${job.id} notificationId=${data.notificationId.trim()}`
+          );
           return;
         }
 
@@ -283,12 +315,18 @@ export async function getNotificationWorker() {
           return;
         }
 
+        console.log(
+          `[notification-worker:received] name=${job.name} id=${job.id} users=${validUsers.length} schoolId=${schoolId}`
+        );
         await sendPush({
           schoolId,
           userIds: validUsers,
           title,
           body: message,
         });
+        console.log(
+          `[notification-worker:processed] name=${job.name} id=${job.id} users=${validUsers.length} schoolId=${schoolId}`
+        );
       } catch (err) {
         console.error("[notification-worker] handler error", err);
         throw err;

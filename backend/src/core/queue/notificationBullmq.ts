@@ -23,7 +23,7 @@ export async function getNotificationQueue(): Promise<Queue | null> {
     return null;
   }
 
-  notificationQueue = new Queue("notifications", {
+  notificationQueue = new Queue("notification", {
     connection,
     defaultJobOptions: {
       attempts: 3,

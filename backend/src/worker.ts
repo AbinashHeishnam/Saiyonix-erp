@@ -7,7 +7,7 @@ import prisma from "@/core/db/prisma";
 import { Queue } from "bullmq";
 import { getJobQueue } from "@/core/queue/queue";
 import { getRedis } from "@/core/redis";
-import { getJobWorker } from "@/core/queue/worker";
+import { getJobWorker, getNotificationWorker } from "@/core/queue/worker";
 import { env } from "@/config/env";
 
 if (process.env.NODE_ENV === "production" && process.env.ALLOW_CONSOLE_LOGS !== "true") {
@@ -28,6 +28,9 @@ async function setupRepeatableJobs() {
   // ✅ THIS ACTUALLY STARTS YOUR QUEUE PROCESSOR
   await getJobWorker();
   console.log("[worker] Job worker initialized");
+
+  await getNotificationWorker();
+  console.log("[worker] Notification worker initialized");
 
   const jobQueue = await getJobQueue();
   if (!(jobQueue instanceof Queue)) {
