@@ -508,40 +508,45 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
 
   // Expo batch send (reduces request count dramatically for large fanout).
   if (expoItems.length > 0) {
-    function extractScopeKey(token: string): string {
-      const match = token.match(/\[(.*?)\]/);
-      return match ? match[1] : "unknown";
+    function getProjectFromExpoToken(token: string): string {
+      const match = token.match(/(.*?)/);
+      if (match?.[1]) return match[1];
+
+      // Fallback for typical Expo tokens formatted as ExponentPushToken[...]
+      // (still token-derived; no deviceInfo usage).
+      const bracketMatch = token.match(/\[(.*?)\]/);
+      if (bracketMatch?.[1]) return bracketMatch[1];
+
+      return "invalid";
     }
-
-    const readProjectKey = (deviceInfo: unknown): string | null => {
-      const device = toRecord(deviceInfo);
-      const expo = toRecord(device.expo);
-
-      if (typeof expo.projectId === "string" && expo.projectId.trim().length > 0) {
-        return expo.projectId.trim();
-      }
-      if (typeof device.projectId === "string" && device.projectId.trim().length > 0) {
-        return device.projectId.trim();
-      }
-      if (typeof device.experienceId === "string" && device.experienceId.trim().length > 0) {
-        return device.experienceId.trim();
-      }
-      if (typeof device.scopeKey === "string" && device.scopeKey.trim().length > 0) {
-        return device.scopeKey.trim();
-      }
-      if (typeof expo.scopeKey === "string" && expo.scopeKey.trim().length > 0) {
-        return expo.scopeKey.trim();
-      }
-
-      return null;
-    };
 
     const sendExpo = async (messages: ExpoPushMessage[]) =>
       withTimeout(expoClient.sendPushNotificationsAsync(messages), 5000);
 
     const groups = new Map<string, typeof expoItems>();
     for (const item of expoItems) {
-      const project = readProjectKey(item.deviceInfo) ?? extractScopeKey(item.expoToken) ?? "unknown";
+      const project = getProjectFromExpoToken(item.expoToken);
+      if (project === "invalid") {
+        logger.error(`[push] failed to parse project from Expo token pushTokenId=${item.pushTokenId}`);
+        const stats = getStats(item.recipientId);
+        stats.skipped += 1;
+        await createLog({
+          schoolId: notification.schoolId,
+          notificationId: notification.id,
+          recipientId: item.recipientId,
+          userId: item.userId,
+          pushTokenId: item.pushTokenId,
+          channel: "MOBILE_PUSH",
+          platform: "EXPO",
+          status: "FAILED",
+          errorCode: "EXPO_PROJECT_PARSE_FAILED",
+          errorMessage: "Could not extract project key from Expo token",
+        }).catch((logError) => {
+          logger.error("[NOTIFICATION] failed to write expo failure log", logError);
+        });
+        continue;
+      }
+
       const list = groups.get(project);
       if (list) {
         list.push(item);
@@ -551,6 +556,9 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
     }
 
     logger.info(`[push] grouped tokens: ${groups.size}`);
+    for (const [project, items] of groups) {
+      logger.info(`[push] project=${project} tokens=${items.length}`);
+    }
 
     for (const [project, items] of groups) {
       if (items.length === 0) continue;
