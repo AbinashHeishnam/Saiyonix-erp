@@ -501,6 +501,7 @@ export async function createAndDispatchNotification(
   });
 
   if (created.notificationId && created.userIds.length > 0) {
+    console.log("[DEBUG] FINAL USER IDS:", created.userIds);
     console.log("[PUSH SEND] RECIPIENT USER IDS:", {
       count: created.userIds.length,
       sample: created.userIds.slice(0, 50),
