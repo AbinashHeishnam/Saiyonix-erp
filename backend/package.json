@@ -58,6 +58,7 @@
     "socket.io": "^4.7.5",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
+    "tsconfig-paths": "^4.2.0",
     "uuid": "^13.0.0",
     "winston": "^3.19.0",
     "xlsx": "^0.18.5",
