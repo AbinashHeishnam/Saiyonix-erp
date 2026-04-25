@@ -523,8 +523,61 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
   if (expoItems.length > 0) {
     logger.info(`[push] entering grouped send, totalItems=${expoItems.length}`);
 
-    const sendExpo = async (messages: ExpoPushMessage[]) =>
-      withTimeout(expoClient.sendPushNotificationsAsync(messages), 5000);
+    const sendExpo = async (messages: ExpoPushMessage[]) => {
+      const tickets = await withTimeout(expoClient.sendPushNotificationsAsync(messages), 5000);
+
+      console.log("🚨 EXPO TICKETS RAW:");
+      console.log(JSON.stringify(tickets, null, 2));
+
+      for (const ticket of tickets) {
+        if (ticket.status === "error") {
+          console.error("❌ PUSH TICKET ERROR:", {
+            message: ticket.message,
+            details: "details" in ticket ? ticket.details : undefined,
+          });
+        } else {
+          console.log("✅ PUSH TICKET OK:", "id" in ticket ? ticket.id : undefined);
+        }
+      }
+
+      const receiptIds: string[] = [];
+      for (const ticket of tickets) {
+        if (ticket.status === "ok" && "id" in ticket && ticket.id) {
+          receiptIds.push(ticket.id);
+        }
+      }
+
+      console.log("📦 RECEIPT IDS:", receiptIds);
+
+      if (receiptIds.length > 0) {
+        try {
+          const receipts = await withTimeout(expoClient.getPushNotificationReceiptsAsync(receiptIds), 5000);
+
+          console.log("🚨 EXPO RECEIPTS RAW:");
+          console.log(JSON.stringify(receipts, null, 2));
+
+          for (const [id, receipt] of Object.entries(receipts)) {
+            if (receipt && typeof receipt === "object" && "status" in receipt && receipt.status === "error") {
+              console.error("❌ PUSH RECEIPT ERROR:", {
+                id,
+                message: "message" in receipt ? (receipt as { message?: unknown }).message : undefined,
+                details: "details" in receipt ? (receipt as { details?: unknown }).details : undefined,
+              });
+            } else {
+              console.log("✅ PUSH RECEIPT OK:", id);
+            }
+          }
+        } catch (err) {
+          console.error("❌ PUSH RECEIPT ERROR:", {
+            id: "RECEIPT_FETCH_FAILED",
+            message: err instanceof Error ? err.message : String(err),
+            details: err,
+          });
+        }
+      }
+
+      return tickets;
+    };
 
     const groups = new Map<string, typeof expoItems>();
     for (const item of expoItems) {
