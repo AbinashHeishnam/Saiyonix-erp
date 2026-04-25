@@ -636,45 +636,32 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
 
   // Expo batch send (reduces request count dramatically for large fanout).
   if (expoItems.length > 0) {
-    function extractScopeKey(token: string): string | null {
-      const match = token.match(/\[(.*?)\]/);
-      return match ? match[1] : null;
-    }
-
-    const readProjectKey = (item: (typeof expoItems)[number]) => {
-      const device = toRecord(item.deviceInfo);
+    function extractProjectKey(token: string, deviceInfo: unknown): string {
+      const device = toRecord(deviceInfo);
       const expo = toRecord(device.expo);
 
-      const candidates: unknown[] = [
-        device.expoProjectId,
-        device.projectId,
-        expo.projectId,
-        device.easProjectId,
-        device.experienceId,
-        device.expoExperienceId,
-        expo.experienceId,
-        device.scopeKey,
-        expo.scopeKey,
-      ];
-
-      for (const value of candidates) {
-        if (typeof value === "string" && value.trim().length > 0) {
-          return value.trim();
-        }
+      if (typeof expo.projectId === "string" && expo.projectId.trim().length > 0) {
+        return expo.projectId;
+      }
+      if (typeof device.projectId === "string" && device.projectId.trim().length > 0) {
+        return device.projectId;
+      }
+      if (typeof device.experienceId === "string" && device.experienceId.trim().length > 0) {
+        return device.experienceId;
       }
 
-      return null;
-    };
+      const match = token.match(/\[(.*?)\]/);
+      return match ? match[1] : "unknown";
+    }
 
     const groups = new Map<string, typeof expoItems>();
     for (const item of expoItems) {
-      const project = readProjectKey(item) || extractScopeKey(item.expoToken) || "unknown";
-      const key = project ?? "unknown";
-      const list = groups.get(key);
+      const project = extractProjectKey(item.expoToken, item.deviceInfo);
+      const list = groups.get(project);
       if (list) {
         list.push(item);
       } else {
-        groups.set(key, [item]);
+        groups.set(project, [item]);
       }
     }
 
@@ -683,6 +670,7 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
     for (const [project, items] of groups) {
       if (items.length === 0) continue;
 
+      logger.info(`[push] sending project=${project} tokens=${items.length}`);
       logger.info(`[push] sending batch project=${project} count=${items.length}`);
 
       const messages: ExpoPushMessage[] = items.map((item) => ({
