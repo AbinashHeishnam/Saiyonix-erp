@@ -234,134 +234,6 @@ async function markRecipientStatus(recipientId: string, status: string) {
   });
 }
 
-async function sendExpoPush(
-  notification: StoredNotification,
-  recipient: StoredNotification["recipients"][number],
-  tokens: StoredNotification["recipients"][number]["user"]["pushTokens"],
-  alreadySentTokenIds: Set<string>
-) {
-  const validTokens = tokens.filter((item) => {
-    if (alreadySentTokenIds.has(item.id)) return false;
-    return item.platform === "EXPO" && Expo.isExpoPushToken(item.token);
-  });
-
-  if (!validTokens.length) {
-    return {
-      sent: 0,
-      failed: 0,
-      invalid: 0,
-      skipped: tokens.filter((item) => item.platform === "EXPO").length,
-    };
-  }
-
-  const messages: ExpoPushMessage[] = validTokens.map((pushToken) => ({
-    to: pushToken.token,
-    title: notification.title,
-    body: notification.body,
-    data: buildDeliveryPayload(notification, recipient),
-    sound: "default",
-    priority: "high",
-  }));
-
-  let sent = 0;
-  let failed = 0;
-  let invalid = 0;
-  for (const chunk of expoClient.chunkPushNotifications(messages)) {
-    let tickets: ExpoPushTicket[];
-    try {
-      tickets = await withTimeout(expoClient.sendPushNotificationsAsync(chunk), 5000);
-    } catch (error) {
-      failed += chunk.length;
-      await Promise.all(
-        chunk.map(async (_message, index) => {
-          const pushToken = validTokens[index];
-          if (!pushToken) return;
-          try {
-            await createLog({
-              schoolId: notification.schoolId,
-              notificationId: notification.id,
-              recipientId: recipient.id,
-              userId: recipient.userId,
-              pushTokenId: pushToken.id,
-              channel: "MOBILE_PUSH",
-              platform: "EXPO",
-              status: "FAILED",
-              errorCode: error instanceof Error && error.message === "Push timeout" ? "PUSH_TIMEOUT" : "EXPO_PUSH_FAILED",
-              errorMessage: error instanceof Error ? error.message : String(error),
-            });
-          } catch (logError) {
-            logger.error("[NOTIFICATION] failed to write expo failure log", logError);
-          }
-        })
-      );
-      continue;
-    }
-    await Promise.all(
-      tickets.map(async (ticket: ExpoPushTicket, index) => {
-        const pushToken = validTokens[index];
-        if (!pushToken) {
-          return;
-        }
-
-        if (ticket.status === "ok") {
-          sent += 1;
-          try {
-            await createLog({
-              schoolId: notification.schoolId,
-              notificationId: notification.id,
-              recipientId: recipient.id,
-              userId: recipient.userId,
-              pushTokenId: pushToken.id,
-              channel: "MOBILE_PUSH",
-              platform: "EXPO",
-              status: "SENT",
-              providerMessageId: (ticket as ExpoPushSuccessTicket).id ?? null,
-              deliveredAt: new Date(),
-            });
-          } catch (logError) {
-            logger.error("[NOTIFICATION] failed to write expo sent log", logError);
-          }
-          return;
-        }
-
-        failed += 1;
-        const details = "details" in ticket && ticket.details ? ticket.details : undefined;
-        const errorCode =
-          details && typeof details === "object" && "error" in details
-            ? String(details.error)
-            : ticket.message ?? "EXPO_PUSH_FAILED";
-        const invalidToken = errorCode === "DeviceNotRegistered";
-        if (invalidToken) {
-          invalid += 1;
-          try {
-            await invalidateToken(pushToken.id, errorCode);
-          } catch (invalidateError) {
-            logger.error("[NOTIFICATION] failed to invalidate expo token", invalidateError);
-          }
-        }
-        try {
-          await createLog({
-            schoolId: notification.schoolId,
-            notificationId: notification.id,
-            recipientId: recipient.id,
-            userId: recipient.userId,
-            pushTokenId: pushToken.id,
-            channel: "MOBILE_PUSH",
-            platform: "EXPO",
-            status: invalidToken ? "INVALID_TOKEN" : "FAILED",
-            errorCode,
-            errorMessage: ticket.message ?? null,
-          });
-        } catch (logError) {
-          logger.error("[NOTIFICATION] failed to write expo failure log", logError);
-        }
-      })
-    );
-  }
-
-  return { sent, failed, invalid, skipped: 0 };
-}
-
 async function fetchNotification(notificationId: string) {
   return prisma.notification.findUnique({
     where: { id: notificationId },
@@ -636,27 +508,40 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
 
   // Expo batch send (reduces request count dramatically for large fanout).
   if (expoItems.length > 0) {
-    function extractProjectKey(token: string, deviceInfo: unknown): string {
-      const device = toRecord(deviceInfo);
-      const expo = toRecord(device.expo);
-
-      if (typeof expo.projectId === "string" && expo.projectId.trim().length > 0) {
-        return expo.projectId;
-      }
-      if (typeof device.projectId === "string" && device.projectId.trim().length > 0) {
-        return device.projectId;
-      }
-      if (typeof device.experienceId === "string" && device.experienceId.trim().length > 0) {
-        return device.experienceId;
-      }
-
+    function extractScopeKey(token: string): string {
       const match = token.match(/\[(.*?)\]/);
       return match ? match[1] : "unknown";
     }
 
+    const readProjectKey = (deviceInfo: unknown): string | null => {
+      const device = toRecord(deviceInfo);
+      const expo = toRecord(device.expo);
+
+      if (typeof expo.projectId === "string" && expo.projectId.trim().length > 0) {
+        return expo.projectId.trim();
+      }
+      if (typeof device.projectId === "string" && device.projectId.trim().length > 0) {
+        return device.projectId.trim();
+      }
+      if (typeof device.experienceId === "string" && device.experienceId.trim().length > 0) {
+        return device.experienceId.trim();
+      }
+      if (typeof device.scopeKey === "string" && device.scopeKey.trim().length > 0) {
+        return device.scopeKey.trim();
+      }
+      if (typeof expo.scopeKey === "string" && expo.scopeKey.trim().length > 0) {
+        return expo.scopeKey.trim();
+      }
+
+      return null;
+    };
+
+    const sendExpo = async (messages: ExpoPushMessage[]) =>
+      withTimeout(expoClient.sendPushNotificationsAsync(messages), 5000);
+
     const groups = new Map<string, typeof expoItems>();
     for (const item of expoItems) {
-      const project = extractProjectKey(item.expoToken, item.deviceInfo);
+      const project = readProjectKey(item.deviceInfo) ?? extractScopeKey(item.expoToken) ?? "unknown";
       const list = groups.get(project);
       if (list) {
         list.push(item);
@@ -689,7 +574,7 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
 
         let tickets: ExpoPushTicket[];
         try {
-          tickets = await withTimeout(expoClient.sendPushNotificationsAsync(chunk), 5000);
+          tickets = await sendExpo(chunk);
         } catch (error) {
           if (String(error).includes("PUSH_TOO_MANY_EXPERIENCE_IDS")) {
             logger.warn("[push] fallback: splitting into single sends");
@@ -708,10 +593,7 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
 
                 let singleTickets: ExpoPushTicket[];
                 try {
-                  singleTickets = await withTimeout(
-                    expoClient.sendPushNotificationsAsync([message]),
-                    5000
-                  );
+                  singleTickets = await sendExpo([message]);
                 } catch (e) {
                   transientFailures += 1;
                   stats.failed += 1;
