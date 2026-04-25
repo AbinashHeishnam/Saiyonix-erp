@@ -541,9 +541,20 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
       }
 
       const receiptIds: string[] = [];
-      for (const ticket of tickets) {
-        if (ticket.status === "ok" && "id" in ticket && ticket.id) {
-          receiptIds.push(ticket.id);
+      const receiptTokenById = new Map<string, string>();
+      for (let index = 0; index < tickets.length; index += 1) {
+        const ticket = tickets[index];
+        if (!ticket || ticket.status !== "ok" || !("id" in ticket) || !ticket.id) continue;
+
+        receiptIds.push(ticket.id);
+
+        const message = messages[index];
+        const token =
+          message && typeof (message as { to?: unknown }).to === "string"
+            ? ((message as { to: string }).to as string)
+            : null;
+        if (token) {
+          receiptTokenById.set(ticket.id, token);
         }
       }
 
@@ -558,6 +569,20 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
 
           for (const [id, receipt] of Object.entries(receipts)) {
             if (receipt && typeof receipt === "object" && "status" in receipt && receipt.status === "error") {
+              const error = (receipt as { details?: { error?: string } }).details?.error;
+
+              if (error === "DeviceNotRegistered") {
+                const token = receiptTokenById.get(id);
+                if (token) {
+                  console.log("🧹 Removing invalid token:", token);
+
+                  await prisma.pushToken.updateMany({
+                    where: { token },
+                    data: { invalidatedAt: new Date() },
+                  });
+                }
+              }
+
               console.error("❌ PUSH RECEIPT ERROR:", {
                 id,
                 message: "message" in receipt ? (receipt as { message?: unknown }).message : undefined,
