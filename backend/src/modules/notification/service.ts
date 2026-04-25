@@ -197,6 +197,9 @@ export async function trigger(
     `[trace] 🔥 CHANNEL CHECK trigger eventType=${eventType} channels=${JSON.stringify(config.deliveryChannels)}`
   );
 
+  logger.info(
+    `[DEBUG] deliveryChannels=${JSON.stringify(config.deliveryChannels)} targetType=${(payload as { targetType?: unknown })?.targetType ?? "unknown"}`
+  );
   if (config.deliveryChannels.includes("PUSH")) {
     try {
       console.log("🔥 BEFORE QUEUE", notification.id);
@@ -400,6 +403,9 @@ export async function sendNotification(
       `[trace] 🔥 CHANNEL CHECK sendNotification targetType=${payload.targetType} channels=${JSON.stringify(deliveryChannels)}`
     );
 
+    logger.info(
+      `[DEBUG] deliveryChannels=${JSON.stringify(deliveryChannels)} targetType=${payload?.targetType ?? "unknown"}`
+    );
     if (deliveryChannels.includes("PUSH")) {
       try {
         console.log("🔥 BEFORE QUEUE", notification.id);
