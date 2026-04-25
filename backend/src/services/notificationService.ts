@@ -464,12 +464,15 @@ export async function removePushToken(input: RemoveTokenInput) {
 }
 
 export async function queueNotificationDelivery(notificationId: string) {
+  console.log("[QUEUE] called", notificationId);
   const queue = await getNotificationQueue();
+  console.log("[QUEUE] instance =", !!queue);
   if (!queue) {
     await deliverQueuedNotification({ notificationId });
     return { queued: false };
   }
 
+  console.log("[QUEUE] adding job");
   await queue.add("deliver-notification", { notificationId } satisfies DeliveryJobPayload, {
     jobId: `notification:${notificationId}`,
     attempts: 5,
@@ -480,6 +483,7 @@ export async function queueNotificationDelivery(notificationId: string) {
     removeOnComplete: 1000,
     removeOnFail: 5000,
   });
+  console.log("[QUEUE] job added");
 
   return { queued: true };
 }

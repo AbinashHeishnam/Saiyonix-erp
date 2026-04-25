@@ -186,10 +186,18 @@ export async function trigger(
 
   if (config.deliveryChannels.includes("PUSH")) {
     try {
+      console.log("[DEBUG] before queue call", notification.id);
       await queueNotificationDelivery(notification.id);
+      console.log("[DEBUG] after queue call");
     } catch {
       throw new Error("Queue failed — no fallback allowed");
     }
+  } else {
+    console.log("[DEBUG] push skipped", {
+      notificationId: notification.id,
+      deliveryChannels: config.deliveryChannels,
+      eventType,
+    });
   }
 
   return { notification, recipientCount: recipients.length };
@@ -366,10 +374,19 @@ export async function sendNotification(
 
     if (deliveryChannels.includes("PUSH")) {
       try {
+        console.log("[DEBUG] before queue call", notification.id);
         await queueNotificationDelivery(notification.id);
+        console.log("[DEBUG] after queue call");
       } catch {
         throw new Error("Queue failed — no fallback allowed");
       }
+    } else {
+      console.log("[DEBUG] push skipped", {
+        notificationId: notification.id,
+        priority: payload.priority,
+        deliveryChannels,
+        targetType: payload.targetType,
+      });
     }
 
     if (idempotencyKey) {
