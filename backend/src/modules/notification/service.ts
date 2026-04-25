@@ -566,6 +566,7 @@ export async function registerPushToken(params: {
   schoolId: string;
   userId: string;
   token: string;
+  projectId?: string;
   platform: "EXPO" | "FCM";
   deviceInfo?: Prisma.InputJsonValue;
 }) {

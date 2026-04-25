@@ -17,6 +17,7 @@ const expoTokenSchema = z
 export const registerTokenSchema = z
   .object({
     token: z.string().trim().min(5).max(2048),
+    projectId: z.string().trim().min(1).max(255),
     platform: pushPlatformSchema,
     deviceInfo: z.unknown().optional(),
   })

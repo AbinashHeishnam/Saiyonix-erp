@@ -169,6 +169,7 @@ export async function registerToken(req: AuthRequest, res: Response, next: NextF
       schoolId,
       platform: body.platform,
       token: typeof body.token === "string" ? maskToken(body.token) : null,
+      projectId: typeof body.projectId === "string" ? body.projectId : null,
       hasAuthorizationHeader: typeof req.headers.authorization === "string" && req.headers.authorization.length > 0,
     });
 
@@ -177,6 +178,7 @@ export async function registerToken(req: AuthRequest, res: Response, next: NextF
       schoolId,
       userId,
       token: body.token,
+      projectId: body.projectId,
       platform,
       deviceInfo: body.deviceInfo as never,
     });

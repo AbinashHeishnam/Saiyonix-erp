@@ -33,6 +33,7 @@ export async function register(req: AuthRequest, res: Response, next: NextFuncti
       schoolId,
       userId,
       token: body.token,
+      projectId: body.projectId,
       platform,
       deviceInfo: body.deviceInfo as never,
     });
@@ -55,4 +56,3 @@ export async function unregister(req: AuthRequest, res: Response, next: NextFunc
     return next(error);
   }
 }
-

@@ -25,6 +25,7 @@ type RegisterTokenInput = {
   schoolId: string;
   userId: string;
   token: string;
+  projectId?: string;
   platform: PushPlatform;
   deviceInfo?: Prisma.InputJsonValue;
 };
@@ -54,6 +55,7 @@ type StoredNotification = Prisma.NotificationGetPayload<{
                 id: true;
                 token: true;
                 platform: true;
+                projectId: true;
                 deviceInfo: true;
               };
             };
@@ -251,6 +253,7 @@ async function fetchNotification(notificationId: string) {
                   id: true,
                   token: true,
                   platform: true,
+                  projectId: true,
                   deviceInfo: true,
                 },
               },
@@ -265,6 +268,7 @@ async function fetchNotification(notificationId: string) {
 export async function registerPushToken(input: RegisterTokenInput) {
   const now = new Date();
   const token = input.token.trim();
+  const rawProjectId = typeof input.projectId === "string" ? input.projectId.trim() : null;
   if (!token) {
     throw new ApiError(400, "Push token is required");
   }
@@ -273,11 +277,16 @@ export async function registerPushToken(input: RegisterTokenInput) {
     throw new ApiError(400, "Invalid Expo push token");
   }
   const platform: PushPlatform = isExpoToken ? "EXPO" : input.platform;
+  const projectId = platform === "EXPO" ? rawProjectId : null;
+  if (platform === "EXPO" && !projectId) {
+    throw new ApiError(400, "projectId is required for Expo tokens");
+  }
 
   const select = {
     id: true,
     token: true,
     platform: true,
+    projectId: true,
     createdAt: true,
     updatedAt: true,
     lastSeenAt: true,
@@ -291,6 +300,7 @@ export async function registerPushToken(input: RegisterTokenInput) {
       userId: input.userId,
       invalidatedAt: null,
       platform,
+      projectId,
       deviceInfo: input.deviceInfo,
       lastSeenAt: now,
     },
@@ -299,6 +309,7 @@ export async function registerPushToken(input: RegisterTokenInput) {
       userId: input.userId,
       token,
       platform,
+      projectId,
       deviceInfo: input.deviceInfo,
       invalidatedAt: null,
       lastSeenAt: now,
@@ -367,7 +378,6 @@ export async function queueNotificationDelivery(notificationId: string) {
 }
 
 export async function deliverQueuedNotification(job: DeliveryJobPayload) {
-  console.log("🔥 USING GROUPED PUSH FLOW");
   const notification = await fetchNotification(job.notificationId);
   if (!notification) {
     logger.warn(`[NOTIFICATION] notification ${job.notificationId} not found for delivery`);
@@ -432,6 +442,7 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
   const expoItems: Array<{
     pushTokenId: string;
     expoToken: string;
+    projectId: string | null;
     recipientId: string;
     userId: string;
     data: Record<string, unknown>;
@@ -477,6 +488,7 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
         expoItems.push({
           pushTokenId: token.id,
           expoToken: token.token,
+          projectId: token.projectId ?? null,
           recipientId: recipient.id,
           userId: recipient.userId,
           data: buildDeliveryPayload(notification, recipient),
@@ -510,23 +522,15 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
   // Expo batch send (reduces request count dramatically for large fanout).
   if (expoItems.length > 0) {
     logger.info(`[push] entering grouped send, totalItems=${expoItems.length}`);
-    console.log("🔥 GROUPING START", expoItems.length);
 
-    function extractScopeKey(token: string): string | null {
-      const match = token.match(/(.*?)/);
-      return match ? match[1] : null;
-    }
-
-    const sendExpo = async (messages: ExpoPushMessage[]) => {
-      console.log("🚨 DIRECT EXPO SEND CALLED", new Error().stack);
-      return withTimeout(expoClient.sendPushNotificationsAsync(messages), 5000);
-    };
+    const sendExpo = async (messages: ExpoPushMessage[]) =>
+      withTimeout(expoClient.sendPushNotificationsAsync(messages), 5000);
 
     const groups = new Map<string, typeof expoItems>();
     for (const item of expoItems) {
-      const project = extractScopeKey(item.expoToken);
+      const project = item.projectId?.trim() || null;
       if (!project) {
-        logger.error(`[push] INVALID TOKEN FORMAT: ${item.expoToken}`);
+        logger.error(`[push] missing projectId for Expo token pushTokenId=${item.pushTokenId}`);
         continue;
       }
 
@@ -539,7 +543,7 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
     }
 
     if (groups.size === 0) {
-      throw new Error("No valid Expo project groups formed");
+      logger.error("[push] no valid Expo project groups formed; skipping Expo send");
     }
 
     if (expoItems.length > 0 && groups.size === 1) {

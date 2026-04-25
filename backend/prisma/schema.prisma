@@ -1749,6 +1749,7 @@ model PushToken {
   userId      String
   token       String
   platform    PushPlatform
+  projectId   String?
   deviceInfo  Json?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -1761,6 +1762,7 @@ model PushToken {
   @@unique([userId, token])
   @@index([schoolId, platform])
   @@index([userId, platform])
+  @@index([projectId])
   @@index([invalidatedAt])
 }
 
