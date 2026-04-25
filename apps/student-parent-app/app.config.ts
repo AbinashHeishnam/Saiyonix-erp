@@ -20,8 +20,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   android: {
     package: "com.saiyonix.studentparent",
-    // @ts-ignore: Deprecated but kept to support older configurations
-    useNextNotificationsApi: true,
     googleServicesFile:
       process.env.GOOGLE_SERVICES_JSON ?? "./google-services.json",
   },

@@ -10,13 +10,21 @@ const expoTokenSchema = z
   .min(20)
   .max(200)
   .refine(
-    (value) => /^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9-]{10,}\]$/.test(value),
+    (value) => /^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9\-_]+\]$/.test(value),
     "Invalid Expo push token format"
   );
 
 export const registerTokenSchema = z
   .object({
-    token: z.string().trim().min(5).max(2048),
+    token: z.preprocess(
+      (value) => {
+        if (typeof value === "string") {
+          console.log("[PUSH][VALIDATION] token received:", value);
+        }
+        return value;
+      },
+      z.string().trim().min(5).max(2048)
+    ),
     projectId: z.string().trim().min(1).max(255),
     platform: pushPlatformSchema,
     deviceInfo: z.unknown().optional(),
