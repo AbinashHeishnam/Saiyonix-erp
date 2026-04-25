@@ -367,6 +367,7 @@ export async function queueNotificationDelivery(notificationId: string) {
 }
 
 export async function deliverQueuedNotification(job: DeliveryJobPayload) {
+  console.log("🔥 USING GROUPED PUSH FLOW");
   const notification = await fetchNotification(job.notificationId);
   if (!notification) {
     logger.warn(`[NOTIFICATION] notification ${job.notificationId} not found for delivery`);
@@ -509,14 +510,17 @@ export async function deliverQueuedNotification(job: DeliveryJobPayload) {
   // Expo batch send (reduces request count dramatically for large fanout).
   if (expoItems.length > 0) {
     logger.info(`[push] entering grouped send, totalItems=${expoItems.length}`);
+    console.log("🔥 GROUPING START", expoItems.length);
 
     function extractScopeKey(token: string): string | null {
       const match = token.match(/(.*?)/);
       return match ? match[1] : null;
     }
 
-    const sendExpo = async (messages: ExpoPushMessage[]) =>
-      withTimeout(expoClient.sendPushNotificationsAsync(messages), 5000);
+    const sendExpo = async (messages: ExpoPushMessage[]) => {
+      console.log("🚨 DIRECT EXPO SEND CALLED", new Error().stack);
+      return withTimeout(expoClient.sendPushNotificationsAsync(messages), 5000);
+    };
 
     const groups = new Map<string, typeof expoItems>();
     for (const item of expoItems) {

@@ -3,6 +3,7 @@ import crypto from "crypto";
 
 import prisma from "@/core/db/prisma";
 import { ApiError } from "@/core/errors/apiError";
+import { queueNotificationDelivery } from "@/services/notificationService";
 
 export type NotificationInput = {
   type: string;
@@ -24,13 +25,6 @@ export type NotificationDispatchResult = {
   resolvedRecipients: number;
   createdRecipients: number;
   skippedRecipients: number;
-};
-
-type PushPayload = {
-  type: string;
-  title: string;
-  message: string;
-  meta?: Record<string, any>;
 };
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -342,96 +336,6 @@ export async function resolveRecipients(input: NotificationInput): Promise<strin
   throw new ApiError(400, "Invalid targetType");
 }
 
-async function getPushTokens(userIds: string[]) {
-  return prisma.pushToken.findMany({
-    where: {
-      userId: { in: userIds },
-      invalidatedAt: null,
-      platform: "EXPO",
-    },
-    select: { token: true },
-  });
-}
-
-function isExpoPushToken(token: string) {
-  return /^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9-]{10,}\]$/.test(token);
-}
-
-async function sendPushToUsers(tokens: string[], payload: PushPayload) {
-  const validTokens = uniq(tokens).filter((token) => isExpoPushToken(token));
-  if (!validTokens.length) return;
-
-  console.log("[PUSH SEND] tokens:", validTokens.length);
-
-  const title = typeof payload.title === "string" && payload.title.trim().length > 0 ? payload.title : "Notification";
-  const body = typeof payload.message === "string" ? payload.message : "";
-
-  const messages = validTokens.map((token) => ({
-    to: token,
-    sound: "default",
-    title,
-    body,
-    priority: "high",
-    channelId: "default",
-    data: payload.meta || {},
-  }));
-
-  const chunkSize = 100;
-  for (let i = 0; i < messages.length; i += chunkSize) {
-    const batch = messages.slice(i, i + chunkSize);
-
-    let res: Response;
-    try {
-      res = await fetch("https://exp.host/--/api/v2/push/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(batch),
-      });
-    } catch (err) {
-      console.error("[PUSH ERROR] fetch failed", err);
-      continue;
-    }
-
-    let json: any = null;
-    try {
-      json = await res.json();
-    } catch {
-      json = null;
-    }
-
-    console.log("[PUSH RESPONSE]", JSON.stringify(json));
-
-    const tickets = Array.isArray(json?.data) ? json.data : [];
-    const deadTokens: string[] = [];
-    for (let idx = 0; idx < tickets.length; idx += 1) {
-      const ticket = tickets[idx];
-      if (!ticket || typeof ticket !== "object") continue;
-      if (ticket.status !== "error") continue;
-
-      console.error("[PUSH ERROR]", (ticket as any).details);
-
-      if ((ticket as any).details?.error === "DeviceNotRegistered") {
-        const tokenFromDetails =
-          typeof (ticket as any).details?.expoPushToken === "string"
-            ? String((ticket as any).details.expoPushToken)
-            : null;
-        const tokenFromBatch = typeof (batch[idx] as any)?.to === "string" ? String((batch[idx] as any).to) : null;
-        const dead = tokenFromDetails ?? tokenFromBatch;
-        if (dead) deadTokens.push(dead);
-      }
-    }
-
-    if (deadTokens.length > 0) {
-      await prisma.pushToken.updateMany({
-        where: { token: { in: uniq(deadTokens) } },
-        data: { invalidatedAt: new Date() },
-      });
-    }
-  }
-}
-
 export async function createAndDispatchNotification(
   input: NotificationInput
 ): Promise<NotificationDispatchResult> {
@@ -467,7 +371,7 @@ export async function createAndDispatchNotification(
         entityType: meta?.entityType ? String(meta.entityType) : null,
         entityId,
         metadata: meta as Prisma.InputJsonValue | undefined,
-        sentVia: ["IN_APP"],
+        sentVia: ["IN_APP", "MOBILE_PUSH"],
         sentAt: new Date(),
       },
       select: { id: true },
@@ -500,69 +404,8 @@ export async function createAndDispatchNotification(
     return { notificationId: record.id, userIds: insertedUserIds };
   });
 
-  if (created.notificationId && created.userIds.length > 0) {
-    console.log("[DEBUG] FINAL USER IDS:", created.userIds);
-    console.log("[PUSH SEND] RECIPIENT USER IDS:", {
-      count: created.userIds.length,
-      sample: created.userIds.slice(0, 50),
-    });
-
-    const tokens = await getPushTokens(created.userIds);
-    console.log("[PUSH SEND] TOKENS FOUND:", tokens.length);
-    const tokenValues = tokens.map((t) => t.token).filter((t): t is string => Boolean(t));
-
-    if (tokenValues.length === 0) {
-      let diag: Record<string, unknown> | null = null;
-      try {
-        const [total, active, expoActive, byPlatform, sampleUsersWithAnyToken, sampleTokens] = await Promise.all([
-          prisma.pushToken.count({ where: { userId: { in: created.userIds } } }),
-          prisma.pushToken.count({ where: { userId: { in: created.userIds }, invalidatedAt: null } }),
-          prisma.pushToken.count({
-            where: { userId: { in: created.userIds }, invalidatedAt: null, platform: "EXPO" },
-          }),
-          prisma.pushToken.groupBy({ by: ["platform"], where: { userId: { in: created.userIds } }, _count: { platform: true } }),
-          prisma.pushToken.findMany({
-            where: { userId: { in: created.userIds } },
-            distinct: ["userId"],
-            select: { userId: true },
-            take: 5,
-          }),
-          prisma.pushToken.findMany({
-            where: { userId: { in: created.userIds.slice(0, 20) } },
-            select: { userId: true, platform: true, invalidatedAt: true },
-            take: 50,
-          }),
-        ]);
-
-        diag = {
-          tokenRowsTotal: total,
-          tokenRowsActive: active,
-          tokenRowsExpoActive: expoActive,
-          tokenRowsByPlatform: byPlatform.map((row) => ({ platform: row.platform, count: row._count.platform })),
-          sampleUsersWithAnyToken: sampleUsersWithAnyToken.map((r) => r.userId),
-          sampleTokens,
-        };
-      } catch (err) {
-        diag = { diagError: err instanceof Error ? err.message : String(err) };
-      }
-
-      console.warn("[PUSH SEND] No active tokens for recipients", {
-        recipientCount: created.userIds.length,
-        diag,
-      });
-    }
-
-    const batches = chunk(tokenValues, 500);
-    const payload: PushPayload = {
-      type: input.type,
-      title: input.title,
-      message: input.message,
-      meta: { ...(input.meta ?? {}), type: input.type },
-    };
-
-    for (const batch of batches) {
-      await sendPushToUsers(batch, payload);
-    }
+  if (created.notificationId) {
+    await queueNotificationDelivery(created.notificationId);
   }
 
   return {
