@@ -464,14 +464,19 @@ export async function removePushToken(input: RemoveTokenInput) {
 }
 
 export async function queueNotificationDelivery(notificationId: string) {
+  console.log("🔥 QUEUE FUNCTION CALLED", notificationId);
+  logger.info(`[trace] 🔥 QUEUE FUNCTION CALLED notificationId=${notificationId}`);
   console.log("[QUEUE] called", notificationId);
   const queue = await getNotificationQueue();
   console.log("[QUEUE] instance =", !!queue);
+  logger.info(`[trace] queue instance=${queue ? "true" : "false"} notificationId=${notificationId}`);
   if (!queue) {
     await deliverQueuedNotification({ notificationId });
     return { queued: false };
   }
 
+  console.log("🔥 ADDING JOB TO QUEUE");
+  logger.info(`[trace] 🔥 ADDING JOB TO QUEUE notificationId=${notificationId}`);
   console.log("[QUEUE] adding job");
   await queue.add("deliver-notification", { notificationId } satisfies DeliveryJobPayload, {
     jobId: `notification:${notificationId}`,
@@ -484,6 +489,7 @@ export async function queueNotificationDelivery(notificationId: string) {
     removeOnFail: 5000,
   });
   console.log("[QUEUE] job added");
+  logger.info(`[trace] job added name=deliver-notification notificationId=${notificationId}`);
 
   return { queued: true };
 }

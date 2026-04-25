@@ -20,6 +20,7 @@ import { bulkGeneratePDFs, generateAdmitCardsForExam } from "@/modules/admitCard
 import { generateReportCardPdf } from "@/modules/reportCards/service";
 import { checkAndSendAssignmentReminders } from "@/modules/assignments/service";
 import type { JobPayload } from "@/core/queue/types";
+import { logger } from "@/utils/logger";
 
 const rawConcurrency = Number(process.env.JOB_CONCURRENCY ?? 20);
 const concurrency = Math.min(Math.max(rawConcurrency, 1), 50);
@@ -255,6 +256,17 @@ export async function getNotificationWorker() {
     "notification",
     async (job) => {
       try {
+        console.log("🔥 WORKER RECEIVED JOB", job.name, job.data);
+        try {
+          logger.info(
+            `[trace] 🔥 WORKER RECEIVED JOB queue=notification name=${job.name} id=${job.id} data=${JSON.stringify(job.data ?? null)}`
+          );
+        } catch {
+          logger.info(
+            `[trace] 🔥 WORKER RECEIVED JOB queue=notification name=${job.name} id=${job.id} data=[unserializable]`
+          );
+        }
+
         if (job.name === "deliver-notification") {
           const data = job.data as { notificationId?: string };
           const notificationId =

@@ -131,11 +131,21 @@ export async function markAllRead(
 
 export async function send(req: AuthRequest, res: Response, next: NextFunction) {
   try {
+    console.log("🔥 API HIT", req.body);
+    logger.info(`[trace] 🔥 API HIT /notifications/send body=${JSON.stringify(req.body ?? null)}`);
+    console.log("🔥 CONTROLLER HIT");
+    logger.info("[trace] 🔥 CONTROLLER HIT /notifications/send");
+
     const schoolId = getSchoolId(req);
     const idempotencyKey =
       typeof req.headers["idempotency-key"] === "string"
         ? req.headers["idempotency-key"]
         : undefined;
+
+    logger.info(
+      `[trace] /notifications/send context schoolId=${schoolId} idempotencyKey=${idempotencyKey ?? "n/a"} actor=${req.user?.sub ?? req.user?.id ?? "n/a"}`
+    );
+
     const data = await sendNotificationService(
       schoolId,
       req.body,

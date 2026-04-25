@@ -17,6 +17,7 @@ import { resolveRecipients } from "@/modules/notification/resolvers";
 import { renderTemplate } from "@/modules/notification/templates";
 import type { DeliveryChannel, EventType, NotificationPayload } from "@/modules/notification/types";
 import type { SendNotificationInput } from "@/modules/notification/send.validation";
+import { logger } from "@/utils/logger";
 
 type NotificationRecipientWithNotification = Prisma.NotificationRecipientGetPayload<{
   select: {
@@ -106,6 +107,9 @@ export async function trigger(
   eventType: EventType,
   payload: NotificationPayload
 ): Promise<TriggerResult> {
+  console.log("🔥 SERVICE HIT", { payload });
+  logger.info(`[trace] 🔥 SERVICE HIT trigger eventType=${eventType} payload=${JSON.stringify(payload ?? null)}`);
+
   const schoolId = ensureSchoolId(payload);
   const config = eventConfig[eventType];
 
@@ -184,8 +188,18 @@ export async function trigger(
     }
   }
 
+  console.log("🔥 CHANNEL CHECK", {
+    deliveryChannels: config.deliveryChannels,
+    configChannels: config?.deliveryChannels,
+    targetType: (payload as { targetType?: unknown }).targetType,
+  });
+  logger.info(
+    `[trace] 🔥 CHANNEL CHECK trigger eventType=${eventType} channels=${JSON.stringify(config.deliveryChannels)}`
+  );
+
   if (config.deliveryChannels.includes("PUSH")) {
     try {
+      console.log("🔥 BEFORE QUEUE", notification.id);
       console.log("[DEBUG] before queue call", notification.id);
       await queueNotificationDelivery(notification.id);
       console.log("[DEBUG] after queue call");
@@ -209,6 +223,11 @@ export async function sendNotification(
   sentById?: string,
   idempotencyKey?: string
 ): Promise<TriggerResult> {
+  console.log("🔥 SERVICE HIT", { payload });
+  logger.info(
+    `[trace] 🔥 SERVICE HIT sendNotification schoolId=${schoolId} payload=${JSON.stringify(payload ?? null)}`
+  );
+
   const deliveryChannels = getDeliveryChannels(payload.priority);
   const notificationPayload: NotificationPayload = {
     schoolId,
@@ -372,8 +391,18 @@ export async function sendNotification(
 
     const result = { notification, recipientCount: recipients.length };
 
+    console.log("🔥 CHANNEL CHECK", {
+      deliveryChannels,
+      configChannels: undefined,
+      targetType: payload.targetType,
+    });
+    logger.info(
+      `[trace] 🔥 CHANNEL CHECK sendNotification targetType=${payload.targetType} channels=${JSON.stringify(deliveryChannels)}`
+    );
+
     if (deliveryChannels.includes("PUSH")) {
       try {
+        console.log("🔥 BEFORE QUEUE", notification.id);
         console.log("[DEBUG] before queue call", notification.id);
         await queueNotificationDelivery(notification.id);
         console.log("[DEBUG] after queue call");
@@ -387,6 +416,9 @@ export async function sendNotification(
         deliveryChannels,
         targetType: payload.targetType,
       });
+      logger.info(
+        `[trace] push skipped notificationId=${notification.id} priority=${payload.priority} channels=${JSON.stringify(deliveryChannels)} targetType=${payload.targetType}`
+      );
     }
 
     if (idempotencyKey) {
