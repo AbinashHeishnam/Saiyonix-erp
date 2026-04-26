@@ -72,9 +72,11 @@ backend/backup_before_fix.sql
 .codex
 apps/teacher-app/eas.json
 .expo/
-node_modules/
+node_modules
 apps/teacher-app/google-services.json
 android/
 ios/
 app.json
 
+apps/student-parent-app/firebase.json
+apps/teacher-app/firebase.json
