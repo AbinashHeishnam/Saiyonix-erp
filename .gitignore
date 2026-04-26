@@ -73,7 +73,6 @@ backend/backup_before_fix.sql
 apps/teacher-app/eas.json
 .expo/
 node_modules
-apps/teacher-app/google-services.json
 android/
 ios/
 app.json
