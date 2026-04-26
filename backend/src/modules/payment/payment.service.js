@@ -85,6 +85,7 @@ export async function applyGatewayPaymentUpdate(params) {
             data: {
                 status: nextStatus,
                 gatewayPaymentId: params.gatewayPaymentId ?? payment.gatewayPaymentId ?? null,
+                gatewaySignature: params.gatewaySignature ?? payment.gatewaySignature ?? null,
                 paidAt: nextStatus === "PAID" ? new Date() : payment.paidAt,
             },
             select: { id: true, status: true },

@@ -138,7 +138,10 @@ export async function verify(
     let errorMessage: string | null = null;
 
     try {
+      console.log("[VERIFY] order:", req.body?.razorpayOrderId);
+      console.log("[VERIFY] payment:", req.body?.razorpayPaymentId);
       isValid = await verifyPaymentSignature(req.body);
+      console.log("[VERIFY] valid:", isValid);
       if (!isValid) {
         errorMessage = req.body?.errorMessage ?? "Invalid payment signature";
       }
@@ -194,6 +197,7 @@ export async function verify(
     const result = await applyGatewayPaymentUpdate({
       gatewayOrderId: req.body.razorpayOrderId,
       gatewayPaymentId: req.body.razorpayPaymentId,
+      gatewaySignature: req.body.razorpaySignature,
       status: "PAID",
       source: "VERIFY",
       rawPayload: req.body,

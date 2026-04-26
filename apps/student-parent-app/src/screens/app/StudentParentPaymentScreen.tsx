@@ -90,6 +90,8 @@ export default function StudentParentPaymentScreen() {
     setPaymentError(null);
     setIsPaying(true);
     try {
+      console.log("[PAY] KEY:", razorpayKey);
+
       const order: any = await createPaymentOrder({
         amount: paymentAmount, // rupees
         requestedAmount: paymentAmount,
@@ -97,16 +99,11 @@ export default function StudentParentPaymentScreen() {
         studentId: activeStudentId,
         metadata: { purpose: "fee" },
       });
+      console.log("[PAY] ORDER:", order);
 
       const orderId = order?.id ?? order?.orderId ?? null;
       const orderAmount = order?.amount ?? null;
       const key = razorpayKey;
-
-      console.log("[PAYMENT INIT]", {
-        key,
-        orderId,
-        orderAmount,
-      });
 
       if (!orderId || !orderAmount || !Number.isFinite(Number(orderAmount))) {
         throw new Error("Invalid payment order. Please try again.");
@@ -129,22 +126,42 @@ export default function StudentParentPaymentScreen() {
         throw new Error("Payment initialization failed. Please try again.");
       }
 
-      let result: any;
+      let result: any = null;
       try {
         result = await (RazorpayCheckout as any).open(options);
       } catch (err: any) {
         console.log("PAYMENT ERROR", err);
         throw err;
       }
+      console.log("[PAY] RESULT:", result);
 
-      await verifyPayment({
-        razorpayOrderId: result.razorpay_order_id,
-        razorpayPaymentId: result.razorpay_payment_id,
-        razorpaySignature: result.razorpay_signature,
+      const razorpayPaymentId = result?.razorpay_payment_id ?? null;
+      const razorpayOrderId = result?.razorpay_order_id ?? null;
+      const razorpaySignature = result?.razorpay_signature ?? null;
+
+      if (!razorpayPaymentId || !razorpayOrderId || !razorpaySignature) {
+        throw new Error("Payment success response is missing required fields.");
+      }
+
+      const verifyResponse: any = await verifyPayment({
+        razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature,
       });
+      console.log("[PAY] VERIFY RESPONSE:", verifyResponse);
 
-      queryClient.invalidateQueries({ queryKey: ["fee-status", activeStudentId] });
-      queryClient.invalidateQueries({ queryKey: ["fees", "receipts", activeStudentId] });
+      if (!verifyResponse || verifyResponse.verified !== true) {
+        throw new Error("Payment verification failed.");
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["fee-status", activeStudentId] });
+      await queryClient.invalidateQueries({ queryKey: ["fees", activeStudentId] });
+      await queryClient.invalidateQueries({ queryKey: ["fees", "receipts", activeStudentId] });
+      await queryClient.refetchQueries({ queryKey: ["fee-status", activeStudentId] });
+      await queryClient.refetchQueries({ queryKey: ["fees", activeStudentId] });
+      await queryClient.refetchQueries({ queryKey: ["fees", "receipts", activeStudentId] });
+
+      Alert.alert("Payment successful", "Your payment was verified and recorded.");
       navigation.navigate("Fees" as never);
     } catch (err: any) {
       const errorDescription =

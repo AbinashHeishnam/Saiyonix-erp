@@ -101,6 +101,7 @@ export async function findPaymentByGatewayOrderId(gatewayOrderId: string) {
 export async function applyGatewayPaymentUpdate(params: {
   gatewayOrderId: string;
   gatewayPaymentId?: string | null;
+  gatewaySignature?: string | null;
   status: "PAID" | "FAILED";
   source: "VERIFY" | "WEBHOOK";
   errorMessage?: string | null;
@@ -134,6 +135,7 @@ export async function applyGatewayPaymentUpdate(params: {
       data: {
         status: nextStatus,
         gatewayPaymentId: params.gatewayPaymentId ?? payment.gatewayPaymentId ?? null,
+        gatewaySignature: params.gatewaySignature ?? payment.gatewaySignature ?? null,
         paidAt: nextStatus === "PAID" ? new Date() : payment.paidAt,
       },
       select: { id: true, status: true },

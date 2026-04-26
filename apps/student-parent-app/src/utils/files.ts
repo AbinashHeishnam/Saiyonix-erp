@@ -88,7 +88,8 @@ export function toUploadFile(asset: DocumentPicker.DocumentPickerAsset) {
 export async function openFileUrl(fileUrl?: string | null) {
   try {
     if (!fileUrl) return;
-    const resolved = resolvePublicUrl(fileUrl);
+    const token = getAuthTokens().accessToken;
+    const resolved = resolvePublicUrl(fileUrl, token) ?? fileUrl;
     if (!resolved) return;
     const canOpen = await Linking.canOpenURL(resolved);
     if (!canOpen) {

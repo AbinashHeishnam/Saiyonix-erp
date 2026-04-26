@@ -28,7 +28,15 @@ export async function secureFileAccess(req, res, next) {
                 return value;
             }
         };
-        const fileUrl = safeDecodeURIComponent(fileUrlRaw);
+        // Required: decode the incoming fileUrl query param.
+        const fileUrl = (() => {
+            try {
+                return decodeURIComponent(fileUrlRaw);
+            }
+            catch {
+                return fileUrlRaw;
+            }
+        })();
         const redactToken = (value) => {
             if (!value)
                 return value;
@@ -715,6 +723,60 @@ export async function secureFileAccess(req, res, next) {
             }
             // allow access
             return serveResolvedFile();
+        }
+        // Payment receipt access (DB-based authorization).
+        // If the requested path is a payment receipt, do not fall through to other checks.
+        const isPaymentReceiptPath = normalizedPath.includes("/payments/") || fileUrl.includes("/payments/");
+        if (isPaymentReceiptPath) {
+            const secureCandidate = `/api/v1/files/secure?fileUrl=${encodeURIComponent(normalizedPath)}`;
+            const candidateUrls = Array.from(new Set([normalizedPath, fileUrl, secureCandidate]
+                .filter((v) => typeof v === "string" && v.trim().length > 0)
+                .flatMap((v) => (v.startsWith("/") ? [v, v.slice(1)] : [v, `/${v}`]))));
+            const receipt = await prisma.receipt.findFirst({
+                where: {
+                    OR: [
+                        { pdfUrl: { in: candidateUrls } },
+                        { pdfUrl: { contains: secureCandidate } },
+                        { pdfUrl: { contains: normalizedPath } },
+                    ],
+                },
+                select: {
+                    payment: {
+                        select: {
+                            id: true,
+                            studentId: true,
+                            student: { select: { id: true, userId: true, schoolId: true } },
+                        },
+                    },
+                },
+            });
+            if (!receipt?.payment || receipt.payment.student.schoolId !== schoolId) {
+                throw new ApiError(403, "Forbidden");
+            }
+            const isFinanceAdmin = roleType === "FINANCE_SUB_ADMIN";
+            if (isAdmin || isFinanceAdmin) {
+                return serveResolvedFile();
+            }
+            if (roleType === "STUDENT") {
+                if (!receipt.payment.student.userId || receipt.payment.student.userId !== userId) {
+                    throw new ApiError(403, "Forbidden");
+                }
+                return serveResolvedFile();
+            }
+            if (roleType === "PARENT") {
+                const link = await prisma.parentStudentLink.findFirst({
+                    where: {
+                        studentId: receipt.payment.studentId,
+                        parent: { is: { userId, schoolId } },
+                    },
+                    select: { id: true },
+                });
+                if (!link) {
+                    throw new ApiError(403, "Forbidden");
+                }
+                return serveResolvedFile();
+            }
+            throw new ApiError(403, "Forbidden");
         }
         if (isClassroomFile) {
             const allowed = await ensureClassroomFileAccess();
