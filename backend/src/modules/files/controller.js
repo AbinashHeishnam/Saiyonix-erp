@@ -725,18 +725,25 @@ export async function secureFileAccess(req, res, next) {
             return serveResolvedFile();
         }
         // Payment receipt access (DB-based authorization).
-        // If the requested path is a payment receipt, do not fall through to other checks.
-        const isPaymentReceiptPath = normalizedPath.includes("/payments/") || fileUrl.includes("/payments/");
-        if (isPaymentReceiptPath) {
-            const secureCandidate = `/api/v1/files/secure?fileUrl=${encodeURIComponent(normalizedPath)}`;
-            const candidateUrls = Array.from(new Set([normalizedPath, fileUrl, secureCandidate]
+        // If this file matches a stored receipt pdfUrl, do not fall through to other checks.
+        const mightBeReceipt = normalizedPath.toLowerCase().endsWith(".pdf") || fileUrl.toLowerCase().includes(".pdf");
+        if (mightBeReceipt) {
+            const receiptSecureCandidate = `/api/v1/files/secure?fileUrl=${encodeURIComponent(normalizedPath)}`;
+            const receiptLookupCandidates = Array.from(new Set([
+                normalizedPath,
+                fileUrl,
+                fileUrlRaw,
+                extractInnerFileUrl(fileUrl),
+                extractInnerFileUrl(fileUrlRaw),
+                receiptSecureCandidate,
+            ]
                 .filter((v) => typeof v === "string" && v.trim().length > 0)
-                .flatMap((v) => (v.startsWith("/") ? [v, v.slice(1)] : [v, `/${v}`]))));
+                .flatMap((v) => expandPathVariants(v))));
             const receipt = await prisma.receipt.findFirst({
                 where: {
                     OR: [
-                        { pdfUrl: { in: candidateUrls } },
-                        { pdfUrl: { contains: secureCandidate } },
+                        { pdfUrl: { in: receiptLookupCandidates } },
+                        { pdfUrl: { contains: receiptSecureCandidate } },
                         { pdfUrl: { contains: normalizedPath } },
                     ],
                 },
@@ -750,7 +757,11 @@ export async function secureFileAccess(req, res, next) {
                     },
                 },
             });
-            if (!receipt?.payment || receipt.payment.student.schoolId !== schoolId) {
+            if (!receipt?.payment) {
+                // not a receipt file
+            }
+            else {
+            if (receipt.payment.student.schoolId !== schoolId) {
                 throw new ApiError(403, "Forbidden");
             }
             const isFinanceAdmin = roleType === "FINANCE_SUB_ADMIN";
@@ -777,6 +788,7 @@ export async function secureFileAccess(req, res, next) {
                 return serveResolvedFile();
             }
             throw new ApiError(403, "Forbidden");
+            }
         }
         if (isClassroomFile) {
             const allowed = await ensureClassroomFileAccess();

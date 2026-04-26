@@ -809,24 +809,31 @@ export async function secureFileAccess(
     }
 
     // Payment receipt access (DB-based authorization).
-    // If the requested path is a payment receipt, do not fall through to other checks.
-    const isPaymentReceiptPath =
-      normalizedPath.includes("/payments/") || fileUrl.includes("/payments/");
-    if (isPaymentReceiptPath) {
-      const secureCandidate = `/api/v1/files/secure?fileUrl=${encodeURIComponent(normalizedPath)}`;
-      const candidateUrls = Array.from(
+    // If this file matches a stored receipt pdfUrl, do not fall through to other checks.
+    const mightBeReceipt =
+      normalizedPath.toLowerCase().endsWith(".pdf") || fileUrl.toLowerCase().includes(".pdf");
+    if (mightBeReceipt) {
+      const receiptSecureCandidate = `/api/v1/files/secure?fileUrl=${encodeURIComponent(normalizedPath)}`;
+      const receiptLookupCandidates = Array.from(
         new Set(
-          [normalizedPath, fileUrl, secureCandidate]
-            .filter((v) => typeof v === "string" && v.trim().length > 0)
-            .flatMap((v) => (v.startsWith("/") ? [v, v.slice(1)] : [v, `/${v}`]))
+          [
+            normalizedPath,
+            fileUrl,
+            fileUrlRaw,
+            extractInnerFileUrl(fileUrl),
+            extractInnerFileUrl(fileUrlRaw),
+            receiptSecureCandidate,
+          ]
+            .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+            .flatMap((v) => expandPathVariants(v))
         )
       );
 
       const receipt = await prisma.receipt.findFirst({
         where: {
           OR: [
-            { pdfUrl: { in: candidateUrls } },
-            { pdfUrl: { contains: secureCandidate } },
+            { pdfUrl: { in: receiptLookupCandidates } },
+            { pdfUrl: { contains: receiptSecureCandidate } },
             { pdfUrl: { contains: normalizedPath } },
           ],
         },
@@ -841,7 +848,10 @@ export async function secureFileAccess(
         },
       });
 
-      if (!receipt?.payment || receipt.payment.student.schoolId !== schoolId) {
+      if (!receipt?.payment) {
+        // not a receipt file
+      } else {
+      if (receipt.payment.student.schoolId !== schoolId) {
         throw new ApiError(403, "Forbidden");
       }
 
@@ -872,6 +882,7 @@ export async function secureFileAccess(
       }
 
       throw new ApiError(403, "Forbidden");
+      }
     }
 
     if (isClassroomFile) {
