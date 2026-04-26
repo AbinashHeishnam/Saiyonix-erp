@@ -26,4 +26,4 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       projectId: "e686774f-8c13-4acb-be97-d4d3a813c43e",
     },
   },
-})
+});
