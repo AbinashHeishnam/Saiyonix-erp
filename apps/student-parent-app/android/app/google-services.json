@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "2717770340",
-    "project_id": "saiyonix-student-parent",
-    "storage_bucket": "saiyonix-student-parent.firebasestorage.app"
+    "project_number": "681303677902",
+    "project_id": "saiyonix-erp",
+    "storage_bucket": "saiyonix-erp.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:2717770340:android:fd4b9d60951f7d53897571",
+        "mobilesdk_app_id": "1:681303677902:android:d8ac4a38fb0e44c1a0a99f",
         "android_client_info": {
           "package_name": "com.saiyonix.studentparent"
         }
@@ -15,7 +15,26 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyCsa0SuIBa3UGeuT_LXS5dckmiJBINeC3M"
+          "current_key": "AIzaSyCMi52qYGvT1mqB51uUw46UZZJUu7xXBLU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:681303677902:android:01a1f72434169781a0a99f",
+        "android_client_info": {
+          "package_name": "com.saiyonix.teacher"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCMi52qYGvT1mqB51uUw46UZZJUu7xXBLU"
         }
       ],
       "services": {
