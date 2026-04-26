@@ -5,9 +5,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import RazorpayCheckout from "react-native-razorpay";
 import Constants from "expo-constants";
 import { createPaymentOrder, getRazorpayKey, getStudentFeeStatus, verifyPayment } from "@saiyonix/api";
+import { useAuth } from "@saiyonix/auth";
 import { Button, Card, ErrorState, LoadingState, PageHeader, StatusBadge, colors, typography } from "@saiyonix/ui";
 import { useActiveStudent } from "../../hooks/useActiveStudent";
-import useSchoolBranding from "../../hooks/useSchoolBranding";
 
 function formatCurrency(value: number | null | undefined) {
   if (value === null || value === undefined) return "—";
@@ -23,7 +23,7 @@ export default function StudentParentPaymentScreen() {
   const { activeStudentId } = useActiveStudent();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
-  const { schoolName } = useSchoolBranding();
+  const { user } = useAuth();
   const isExpoGo = Constants.appOwnership === "expo";
   const [customAmount, setCustomAmount] = useState("");
   const [isPaying, setIsPaying] = useState(false);
@@ -53,7 +53,7 @@ export default function StudentParentPaymentScreen() {
     return "danger";
   }, [status]);
 
-  const handlePayNow = () => {
+  const handlePayNow = async () => {
     console.log("CLICK:", "fees_pay_now");
     if (isPaying) return;
     const amountToPay =
@@ -89,70 +89,86 @@ export default function StudentParentPaymentScreen() {
 
     setPaymentError(null);
     setIsPaying(true);
-    createPaymentOrder({
-      amount: paymentAmount, // MUST be dynamic
-      requestedAmount: paymentAmount,
-      currency: "INR",
-      studentId: activeStudentId,
-      metadata: { purpose: "fee" },
-    })
-      .then((order: any) => {
-        if (!order?.orderId || !order?.amount) {
-          throw new Error("Invalid payment order. Please try again.");
-        }
-
-        const options: any = {
-          key: razorpayKey,
-          amount: order.amount,
-          currency: order.currency ?? "INR",
-          order_id: order.orderId,
-          name: schoolName || "School Fees",
-          description: "Fee payment",
-        };
-
-        if (!options.key || !options.amount || !options.currency || !options.order_id) {
-          throw new Error("Payment initialization failed. Please try again.");
-        }
-
-        return (RazorpayCheckout as any).open(options);
-      })
-      .then((data: any) =>
-        verifyPayment({
-          razorpayOrderId: data.razorpay_order_id,
-          razorpayPaymentId: data.razorpay_payment_id,
-          razorpaySignature: data.razorpay_signature,
-        })
-      )
-      .then(() => {
-        queryClient.invalidateQueries({ queryKey: ["fee-status", activeStudentId] });
-        queryClient.invalidateQueries({ queryKey: ["fees", "receipts", activeStudentId] });
-        navigation.navigate("Fees" as never);
-      })
-      .catch(async (err: any) => {
-        const errorDescription =
-          err?.description ??
-          err?.error?.description ??
-          err?.message ??
-          "Payment cancelled";
-        console.log("[PAYMENT FAILED]", err);
-        setPaymentError(errorDescription);
-        setIsPaying(false);
-        try {
-          if (err?.error?.metadata?.order_id) {
-            await verifyPayment({
-              razorpayOrderId: err.error.metadata.order_id,
-              razorpayPaymentId: err.error.metadata.payment_id ?? "failed",
-              razorpaySignature: "failed",
-              errorMessage: errorDescription,
-            });
-          }
-        } catch {
-          // ignore logging failures
-        }
-      })
-      .finally(() => {
-        setIsPaying(false);
+    try {
+      const order: any = await createPaymentOrder({
+        amount: paymentAmount, // rupees
+        requestedAmount: paymentAmount,
+        currency: "INR",
+        studentId: activeStudentId,
+        metadata: { purpose: "fee" },
       });
+
+      const orderId = order?.id ?? order?.orderId ?? null;
+      const orderAmount = order?.amount ?? null;
+      const key = razorpayKey;
+
+      console.log("[PAYMENT INIT]", {
+        key,
+        orderId,
+        orderAmount,
+      });
+
+      if (!orderId || !orderAmount || !Number.isFinite(Number(orderAmount))) {
+        throw new Error("Invalid payment order. Please try again.");
+      }
+
+      const options: any = {
+        key,
+        amount: Number(orderAmount), // paise from backend
+        currency: "INR",
+        order_id: orderId,
+        name: "Saiyonix",
+        description: "Fee payment",
+        prefill: {
+          name: (user?.email ?? "").split("@")[0] ?? "",
+          email: user?.email ?? "",
+        },
+      };
+
+      if (!options.key || !options.amount || !options.currency || !options.order_id) {
+        throw new Error("Payment initialization failed. Please try again.");
+      }
+
+      let result: any;
+      try {
+        result = await (RazorpayCheckout as any).open(options);
+      } catch (err: any) {
+        console.log("PAYMENT ERROR", err);
+        throw err;
+      }
+
+      await verifyPayment({
+        razorpayOrderId: result.razorpay_order_id,
+        razorpayPaymentId: result.razorpay_payment_id,
+        razorpaySignature: result.razorpay_signature,
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["fee-status", activeStudentId] });
+      queryClient.invalidateQueries({ queryKey: ["fees", "receipts", activeStudentId] });
+      navigation.navigate("Fees" as never);
+    } catch (err: any) {
+      const errorDescription =
+        err?.description ??
+        err?.error?.description ??
+        err?.message ??
+        "Payment cancelled";
+      console.log("[PAYMENT FAILED]", err);
+      setPaymentError(errorDescription);
+      try {
+        if (err?.error?.metadata?.order_id) {
+          await verifyPayment({
+            razorpayOrderId: err.error.metadata.order_id,
+            razorpayPaymentId: err.error.metadata.payment_id ?? "failed",
+            razorpaySignature: "failed",
+            errorMessage: errorDescription,
+          });
+        }
+      } catch {
+        // ignore logging failures
+      }
+    } finally {
+      setIsPaying(false);
+    }
   };
 
   return (

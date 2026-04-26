@@ -9,7 +9,7 @@ import PageHeader from "../../components/PageHeader";
 import LoadingState from "../../components/LoadingState";
 import StatusBadge from "../../components/StatusBadge";
 import { useActiveStudent } from "../../hooks/useActiveStudent";
-import { useSchoolBranding } from "../../hooks/useSchoolBranding";
+import { useAuth } from "../../contexts/AuthContext";
 import { getStudentFeeStatus } from "../../services/api/fee";
 import { createPaymentOrder, getRazorpayKey, verifyPayment } from "../../services/api/payments";
 import { toastUtils } from "../../utils/toast";
@@ -32,10 +32,10 @@ function formatDate(value: string | null | undefined) {
 }
 
 export default function PaymentPage() {
-  const { branding } = useSchoolBranding();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const { activeStudent, parentStudents, loading: studentLoading } = useActiveStudent();
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [amount, setAmount] = useState("" as string);
@@ -122,12 +122,30 @@ export default function PaymentPage() {
         },
       });
 
+      const orderId = (order as any)?.id ?? (order as any)?.orderId ?? null;
+      const orderAmount = (order as any)?.amount ?? null;
+      const key = razorpayKey;
+
+      console.log("[PAYMENT INIT]", {
+        key,
+        orderId,
+        orderAmount,
+      });
+
+      if (!orderId || !orderAmount || !Number.isFinite(Number(orderAmount))) {
+        throw new Error("Invalid payment order (missing order id/amount).");
+      }
+
       const options = {
-        key: razorpayKey,
-        amount: order.amount,
-        currency: order.currency ?? "INR",
-        order_id: order.orderId,
-        name: branding.schoolName || "School Fees",
+        key,
+        amount: Number(orderAmount),
+        currency: "INR",
+        order_id: orderId,
+        name: "Saiyonix",
+        prefill: {
+          name: (user?.email ?? "").split("@")[0] ?? "",
+          email: user?.email ?? "",
+        },
         description: "Fee payment",
         handler: async (response: {
           razorpay_payment_id: string;
@@ -174,10 +192,10 @@ export default function PaymentPage() {
         const errorDescription = resp?.error?.description ?? "Payment failed";
         toastUtils.error(errorDescription);
         try {
-          const orderId = resp?.error?.metadata?.order_id ?? order.orderId;
+          const fallbackOrderId = resp?.error?.metadata?.order_id ?? orderId;
           const paymentId = resp?.error?.metadata?.payment_id ?? "failed";
           await verifyPayment({
-            razorpayOrderId: orderId,
+            razorpayOrderId: fallbackOrderId,
             razorpayPaymentId: paymentId,
             razorpaySignature: "failed",
             errorMessage: errorDescription,

@@ -237,7 +237,7 @@ export async function createPaymentOrder(input, schoolId) {
     try {
         const order = await PaymentService.createPaymentOrder({
             amount: amountInPaise,
-            currency: input.currency ?? "INR",
+            currency: "INR",
             receipt: input.receipt ?? payment.id,
             metadata: input.metadata,
         });
@@ -246,9 +246,10 @@ export async function createPaymentOrder(input, schoolId) {
             data: { gatewayOrderId: order.id },
         });
         return {
+            id: order.id,
             orderId: order.id,
-            amount: order.amount,
-            currency: order.currency,
+            amount: Number.isFinite(order.amount) ? Math.trunc(order.amount) : order.amount,
+            currency: "INR",
             receipt: order.receipt,
             paymentId: payment.id,
         };
