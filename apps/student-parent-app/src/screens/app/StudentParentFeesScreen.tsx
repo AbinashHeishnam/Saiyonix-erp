@@ -113,17 +113,26 @@ export default function StudentParentFeesScreen() {
       <Card title="Receipts" subtitle="All fee payment receipts">
         {receiptsQuery.data?.length ? (
           <View style={styles.list}>
-            {receiptsQuery.data.map((receipt: any) => (
-              <View key={receipt.id} style={styles.listItem}>
+            {receiptsQuery.data.map((entry: any) => (
+              <View key={entry?.payment?.id ?? entry?.id} style={styles.listItem}>
                 <View>
-                  <Text style={styles.title}>Receipt #{receipt.paymentId ?? receipt.id}</Text>
-                  <Text style={styles.meta}>Paid: {receipt.paidAt ? formatDate(receipt.paidAt) : "—"}</Text>
+                  <Text style={styles.title}>
+                    Receipt #{entry?.receipt?.number ?? entry?.payment?.id ?? entry?.id ?? "—"}
+                  </Text>
+                  <Text style={styles.meta}>
+                    Paid: {entry?.payment?.createdAt ? formatDate(entry.payment.createdAt) : "—"}
+                  </Text>
                 </View>
                 <Button
                   title="View"
                   size="sm"
                   variant="secondary"
-                  onPress={() => navigation.navigate("Receipt" as never, { paymentId: receipt.paymentId ?? receipt.id } as never)}
+                  onPress={() =>
+                    navigation.navigate(
+                      "Receipt" as never,
+                      { paymentId: entry?.payment?.id ?? entry?.paymentId ?? entry?.id } as never
+                    )
+                  }
                 />
               </View>
             ))}

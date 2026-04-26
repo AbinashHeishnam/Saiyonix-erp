@@ -14,6 +14,11 @@ export default function StudentParentReceiptScreen({ route }: NativeStackScreenP
     queryFn: () => getReceipt(paymentId),
   });
 
+  const payment = (query.data as any)?.payment ?? null;
+  const receipt = (query.data as any)?.receipt ?? null;
+  const fee = (query.data as any)?.fee ?? null;
+  const student = (query.data as any)?.student ?? null;
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <PageHeader title="Receipt" subtitle="Payment receipt details" />
@@ -22,15 +27,26 @@ export default function StudentParentReceiptScreen({ route }: NativeStackScreenP
       {query.error ? <ErrorState message="Unable to load receipt." /> : null}
 
       {query.data ? (
-        <Card title={`Receipt #${query.data.paymentId ?? query.data.id}`}> 
+        <Card title={`Receipt #${receipt?.number ?? payment?.id ?? paymentId}`}>
           <View style={styles.block}>
-            <Text style={styles.meta}>Status: {query.data.status ?? "—"}</Text>
-            <Text style={styles.meta}>Amount: ₹{query.data.amount ?? query.data.paidAmount ?? "—"}</Text>
-            <Text style={styles.meta}>Paid At: {query.data.paidAt ? new Date(query.data.paidAt).toLocaleString() : "—"}</Text>
-            {query.data.receiptUrl || query.data.pdfUrl ? (
+            <Text style={styles.meta}>Payment ID: {payment?.id ?? "—"}</Text>
+            <Text style={styles.meta}>Transaction: {payment?.transactionId ?? "—"}</Text>
+            <Text style={styles.meta}>Student: {student?.fullName ?? "Student"}</Text>
+            {student?.registrationNumber ? (
+              <Text style={styles.meta}>Reg No: {student.registrationNumber}</Text>
+            ) : null}
+            <Text style={styles.meta}>Status: {payment?.status ?? "—"}</Text>
+            <Text style={styles.meta}>Amount: ₹{payment?.amount ?? "—"}</Text>
+            <Text style={styles.meta}>
+              Paid At: {payment?.createdAt ? new Date(payment.createdAt).toLocaleString() : "—"}
+            </Text>
+            <Text style={styles.meta}>Fee Status: {fee?.status ?? "—"}</Text>
+            <Text style={styles.meta}>Total Paid: ₹{fee?.paidAmount ?? "—"}</Text>
+
+            {receipt?.pdfUrl ? (
               <Button
                 title="Open Receipt"
-                onPress={() => openFileUrl(query.data.receiptUrl ?? query.data.pdfUrl)}
+                onPress={() => openFileUrl(receipt.pdfUrl)}
               />
             ) : null}
           </View>
