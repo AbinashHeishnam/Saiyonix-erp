@@ -23,7 +23,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       process.env.EXPO_PUBLIC_API_BASE_URL ??
       "https://api.kangleicareersolution.co.in/api/v1",
     eas: {
-
+      projectId: "e686774f-8c13-4acb-be97-d4d3a813c43e",
     },
   },
 })
