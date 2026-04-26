@@ -75,3 +75,7 @@ apps/teacher-app/eas.json
 node_modules/
 apps/teacher-app/google-services.json
 apps/student-parent-app/google-services.json
+android/
+ios/
+app.json
+
