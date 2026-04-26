@@ -31,7 +31,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "https://api.kangleicareersolution.co.in/api/v1",
 
     eas: {
-      projectId: "617d2f5b-6587-4917-8dc7-d305b77ef56c",
+      projectId: "e686774f-8c13-4acb-be97-d4d3a813c43e",
     },
   },
 });
