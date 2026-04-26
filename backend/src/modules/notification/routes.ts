@@ -16,6 +16,7 @@ import {
   send,
   unreadCount,
   unregisterFcm,
+  remove,
 } from "@/modules/notification/controller";
 import { sendNotificationSchema } from "@/modules/notification/send.validation";
 import { listNotificationQuerySchema, notificationIdParamSchema } from "@/modules/notification/validation";
@@ -171,6 +172,42 @@ notificationRouter.post(
   allowNotificationUpdate,
   validate({ params: notificationIdParamSchema }),
   markRead
+);
+
+notificationRouter.delete(
+  "/:id",
+  authMiddleware,
+  allowRoles(
+    "SUPER_ADMIN",
+    "ADMIN",
+    "ACADEMIC_SUB_ADMIN",
+    "FINANCE_SUB_ADMIN",
+    "TEACHER",
+    "PARENT",
+    "STUDENT"
+  ),
+  allowNotificationUpdate,
+  validate({ params: notificationIdParamSchema }),
+  remove
+);
+
+// Some deployments/gateways do not reliably forward DELETE requests from mobile clients.
+// Provide a POST alias to keep feature parity without changing contracts for existing clients.
+notificationRouter.post(
+  "/:id/delete",
+  authMiddleware,
+  allowRoles(
+    "SUPER_ADMIN",
+    "ADMIN",
+    "ACADEMIC_SUB_ADMIN",
+    "FINANCE_SUB_ADMIN",
+    "TEACHER",
+    "PARENT",
+    "STUDENT"
+  ),
+  allowNotificationUpdate,
+  validate({ params: notificationIdParamSchema }),
+  remove
 );
 
 notificationRouter.post(

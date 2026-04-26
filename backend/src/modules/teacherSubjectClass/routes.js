@@ -1,0 +1,14 @@
+import { Router } from "express";
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { requirePermission } from "../../middleware/permission.middleware";
+import { allowRoles } from "../../middleware/rbac.middleware";
+import { validate } from "../../middleware/validate.middleware";
+import { create, getById, list, remove, update, } from "@/modules/teacherSubjectClass/controller";
+import { createTeacherSubjectClassSchema, listTeacherSubjectClassQuerySchema, teacherSubjectClassIdParamSchema, updateTeacherSubjectClassSchema, } from "@/modules/teacherSubjectClass/validation";
+const teacherSubjectClassRouter = Router();
+teacherSubjectClassRouter.post("/", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("teacherSubjectClass:create"), validate(createTeacherSubjectClassSchema), create);
+teacherSubjectClassRouter.get("/", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"), requirePermission("teacherSubjectClass:read"), validate({ query: listTeacherSubjectClassQuerySchema }), list);
+teacherSubjectClassRouter.get("/:id", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"), requirePermission("teacherSubjectClass:read"), validate({ params: teacherSubjectClassIdParamSchema }), getById);
+teacherSubjectClassRouter.patch("/:id", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("teacherSubjectClass:update"), validate({ params: teacherSubjectClassIdParamSchema, body: updateTeacherSubjectClassSchema }), update);
+teacherSubjectClassRouter.delete("/:id", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("teacherSubjectClass:delete"), validate({ params: teacherSubjectClassIdParamSchema }), remove);
+export default teacherSubjectClassRouter;

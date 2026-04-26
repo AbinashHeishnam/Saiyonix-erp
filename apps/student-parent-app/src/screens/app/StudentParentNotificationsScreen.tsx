@@ -1,8 +1,8 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Linking, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { listNotifications, markAllNotificationsRead, markNotificationRead } from "@saiyonix/api";
+import { api, listNotifications, markAllNotificationsRead, markNotificationRead } from "@saiyonix/api";
 import { Button, Card, EmptyState, ErrorState, PageHeader, colors, typography } from "@saiyonix/ui";
 
 function formatTime(value?: string | null) {
@@ -51,8 +51,11 @@ function mapRouteToScreen(path?: string | null) {
 }
 
 export default function StudentParentNotificationsScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const queryClient = useQueryClient();
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [hiddenRowIds, setHiddenRowIds] = useState<string[]>([]);
 
   const query = useQuery({
     queryKey: ["notifications"],
@@ -60,7 +63,11 @@ export default function StudentParentNotificationsScreen() {
   });
 
   const items = useMemo(() => query.data?.items ?? [], [query.data]);
-  const unreadCount = useMemo(() => items.filter((item: any) => !item.readAt).length, [items]);
+  const hiddenRowIdSet = useMemo(() => new Set(hiddenRowIds), [hiddenRowIds]);
+  useEffect(() => {
+    setNotifications(items.filter((item: any) => !hiddenRowIdSet.has(item?.id)));
+  }, [items, hiddenRowIdSet]);
+  const unreadCount = useMemo(() => notifications.filter((item: any) => !item.readAt).length, [notifications]);
 
   const refreshBadges = () => {
     queryClient.invalidateQueries({ queryKey: ["notification-unread-count"] });
@@ -77,13 +84,43 @@ export default function StudentParentNotificationsScreen() {
     refreshBadges();
   };
 
+  const handleDeleteOne = async (rowId: string, notificationId?: string | null) => {
+    console.log("[DELETE CLICKED]", { rowId, notificationId: notificationId ?? null });
+    setHiddenRowIds((prev) => (prev.includes(rowId) ? prev : [...prev, rowId]));
+    setNotifications((prev) => prev.filter((n: any) => n.id !== rowId));
+    try {
+      const targetId = notificationId ?? rowId;
+      setDeletingId(rowId);
+      try {
+        await api.post(`/notifications/${targetId}/delete`);
+      } catch (err: any) {
+        const status = err?.response?.status;
+        if (status === 404) {
+          await api.delete(`/notifications/${targetId}`);
+        } else {
+          throw err;
+        }
+      }
+      refreshBadges();
+    } catch (err) {
+      const anyErr = err as any;
+      console.log("[DELETE ERROR]", {
+        message: anyErr?.message,
+        status: anyErr?.response?.status,
+        data: anyErr?.response?.data,
+      });
+    } finally {
+      setDeletingId((current) => (current === rowId ? null : current));
+    }
+  };
+
   const navigateTo = (route: string) => {
     const tabRoutes = new Set(["Dashboard", "Classroom", "Timetable", "Alerts", "Profile"]);
     if (tabRoutes.has(route)) {
-      navigation.navigate("Tabs" as never, { screen: route } as never);
+      navigation.navigate("Tabs", { screen: route });
       return;
     }
-    navigation.navigate(route as never);
+    navigation.navigate(route);
   };
 
   return (
@@ -98,12 +135,14 @@ export default function StudentParentNotificationsScreen() {
       {query.error ? <ErrorState message="Unable to load notifications." /> : null}
 
       <Card>
-        {items.length ? (
+        {notifications.length ? (
           <View style={styles.list}>
-            {items.map((item: any) => {
+            {notifications.map((item: any) => {
               const link = resolveLink(item);
               const mapped = mapRouteToScreen(link);
               const isUnread = !item.readAt;
+              const isDeleting = deletingId === item.id;
+              const notificationId = item?.notification?.id ?? null;
               return (
                 <View key={item.id} style={[styles.notice, isUnread && styles.noticeUnread]}>
                   <View style={styles.noticeHeader}>
@@ -145,6 +184,12 @@ export default function StudentParentNotificationsScreen() {
                     {isUnread ? (
                       <Button title="Mark read" variant="ghost" onPress={() => handleMarkOne(item.id)} />
                     ) : null}
+                    <Button
+                      title={isDeleting ? "Deleting..." : "Delete"}
+                      variant="ghost"
+                      onPress={() => handleDeleteOne(item.id, notificationId)}
+                      disabled={isDeleting}
+                    />
                   </View>
                 </View>
               );

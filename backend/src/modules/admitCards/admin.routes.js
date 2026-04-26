@@ -1,0 +1,12 @@
+import { Router } from "express";
+import { authMiddleware } from "@/middleware/auth.middleware";
+import { allowRoles } from "@/middleware/rbac.middleware";
+import { requirePermission } from "@/middleware/permission.middleware";
+import { validate } from "@/middleware/validate.middleware";
+import { publish, togglePublish, listControls } from "@/modules/admitCards/controller";
+import { publishAdmitCardSchema, toggleAdmitCardSchema, admitCardControlQuerySchema } from "@/modules/admitCards/validation";
+const admitCardAdminRouter = Router();
+admitCardAdminRouter.post("/publish", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("admitCard:publish"), validate({ body: publishAdmitCardSchema }), publish);
+admitCardAdminRouter.patch("/publish", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("admitCard:publish"), validate({ body: toggleAdmitCardSchema }), togglePublish);
+admitCardAdminRouter.get("/controls", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("admitCard:publish"), validate({ query: admitCardControlQuerySchema }), listControls);
+export default admitCardAdminRouter;

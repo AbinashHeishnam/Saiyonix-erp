@@ -1,4 +1,5 @@
 export * from "./client";
+export { default as api } from "./client";
 export * from "./auth";
 export * from "./dashboard";
 export * from "./attendance";

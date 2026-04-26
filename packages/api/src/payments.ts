@@ -2,6 +2,7 @@ import api from "./client";
 
 export async function createPaymentOrder(payload: {
   amount?: number;
+  requestedAmount?: number;
   currency?: string;
   receipt?: string;
   metadata?: Record<string, unknown>;

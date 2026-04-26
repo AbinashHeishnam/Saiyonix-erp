@@ -1,0 +1,18 @@
+import { Router } from "express";
+import { authMiddleware } from "@/middleware/auth.middleware";
+import { allowRoles } from "@/middleware/rbac.middleware";
+import { requirePermission } from "@/middleware/permission.middleware";
+import { validate } from "@/middleware/validate.middleware";
+import { adminAddRoomAllocation, adminAddSchedule, adminCreateExam, adminDeleteSchedule, adminPublishExam, adminUnlockExam, adminSetFinalExam, adminDeleteExam, getStudentExamRoutine, } from "@/modules/examManagement/controller";
+import { addExamScheduleSchema, addRoomAllocationSchema, createExamAdminSchema, deleteExamScheduleSchema, examIdParamSchema, setFinalExamSchema, } from "@/modules/examManagement/validation";
+const router = Router();
+router.post("/admin/exam", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("exam:create"), validate(createExamAdminSchema), adminCreateExam);
+router.post("/admin/exam/schedule", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("exam:update"), validate(addExamScheduleSchema), adminAddSchedule);
+router.post("/admin/exam/schedule/delete", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("exam:update"), validate(deleteExamScheduleSchema), adminDeleteSchedule);
+router.post("/admin/exam/room-allocation", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("exam:update"), validate(addRoomAllocationSchema), adminAddRoomAllocation);
+router.patch("/admin/exam/:id/publish", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("exam:publish"), validate({ params: examIdParamSchema }), adminPublishExam);
+router.patch("/admin/exam/:id/unlock", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("exam:lock"), validate({ params: examIdParamSchema }), adminUnlockExam);
+router.patch("/admin/exam/:id/final", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("exam:update"), validate({ params: examIdParamSchema, body: setFinalExamSchema }), adminSetFinalExam);
+router.delete("/admin/exam/:id", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("exam:update"), validate({ params: examIdParamSchema }), adminDeleteExam);
+router.get("/exam/student/me", authMiddleware, allowRoles("STUDENT", "PARENT"), requirePermission("exam:read"), getStudentExamRoutine);
+export default router;

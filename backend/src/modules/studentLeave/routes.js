@@ -1,0 +1,16 @@
+import { Router } from "express";
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { requirePermission } from "../../middleware/permission.middleware";
+import { allowRoles } from "../../middleware/rbac.middleware";
+import { validate } from "../../middleware/validate.middleware";
+import { approve, cancel, create, getById, list, reject, timeline } from "@/modules/studentLeave/controller";
+import { createStudentLeaveSchema, listStudentLeaveQuerySchema, studentLeaveIdParamSchema, } from "@/modules/studentLeave/validation";
+const studentLeaveRouter = Router();
+studentLeaveRouter.post("/", authMiddleware, allowRoles("STUDENT", "PARENT", "ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("studentLeave:create"), validate(createStudentLeaveSchema), create);
+studentLeaveRouter.get("/", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER", "PARENT", "STUDENT"), requirePermission("studentLeave:read"), validate({ query: listStudentLeaveQuerySchema }), list);
+studentLeaveRouter.get("/:id/timeline", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER", "PARENT", "STUDENT"), requirePermission("studentLeave:read"), validate({ params: studentLeaveIdParamSchema }), timeline);
+studentLeaveRouter.get("/:id", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER", "PARENT", "STUDENT"), requirePermission("studentLeave:read"), validate({ params: studentLeaveIdParamSchema }), getById);
+studentLeaveRouter.patch("/:id/approve", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"), requirePermission("studentLeave:update"), validate({ params: studentLeaveIdParamSchema }), approve);
+studentLeaveRouter.patch("/:id/reject", authMiddleware, allowRoles("SUPER_ADMIN", "ADMIN", "ACADEMIC_SUB_ADMIN", "TEACHER"), requirePermission("studentLeave:update"), validate({ params: studentLeaveIdParamSchema }), reject);
+studentLeaveRouter.patch("/:id/cancel", authMiddleware, allowRoles("STUDENT", "PARENT"), requirePermission("studentLeave:update"), validate({ params: studentLeaveIdParamSchema }), cancel);
+export default studentLeaveRouter;

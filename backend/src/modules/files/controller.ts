@@ -18,16 +18,25 @@ export async function secureFileAccess(
   let debugRootFolder = "";
   let debugRoleType = "";
   let debugStorage = "";
+  let debugUserId = "";
   const LOG_FILE_DEBUG =
     process.env.LOG_FILE_ACCESS === "true" || process.env.NODE_ENV !== "production";
   try {
     const user = req.user;
-    const fileUrl =
+    const fileUrlRaw =
       typeof req.query.fileUrl === "string"
         ? req.query.fileUrl
         : typeof req.query.url === "string"
           ? req.query.url
           : "";
+    const safeDecodeURIComponent = (value: string) => {
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    };
+    const fileUrl = safeDecodeURIComponent(fileUrlRaw);
     const redactToken = (value: string) => {
       if (!value) return value;
       if (!value.includes("token=")) return value;
@@ -51,6 +60,7 @@ export async function secureFileAccess(
     }
 
     const userId = (user as { id?: string } | undefined)?.id ?? user.sub;
+    debugUserId = userId ?? "";
     const roleType =
       (user as { roleType?: string; role?: string } | undefined)?.roleType ??
       (user as { role?: string } | undefined)?.role;
@@ -111,9 +121,116 @@ export async function secureFileAccess(
       normalizedPath.includes("/assignments/") ||
       normalizedPath.includes("/assignment-submissions/") ||
       normalizedPath.includes("/classroom/") ||
-      normalizedPath.includes("/notes/");
+      normalizedPath.includes("/notes/") ||
+      normalizedPath.includes("/chat/");
     const isLeaveAttachment = normalizedPath.includes("/leave-attachment/");
     const isNoticeAttachment = normalizedPath.includes("/notice/");
+
+    async function serveResolvedFile() {
+      if (isR2) {
+        debugStorage = "r2";
+        const { stream, contentType, contentLength, eTag } = await downloadFile(r2Key);
+
+        if (res.headersSent) {
+          if (typeof stream.destroy === "function") {
+            stream.destroy();
+          }
+          return;
+        }
+
+        const finalType = contentType ?? "application/octet-stream";
+        res.setHeader("Content-Type", finalType);
+        res.setHeader("Cache-Control", "private, max-age=3600");
+        if (contentLength !== null) {
+          res.setHeader("Content-Length", contentLength.toString());
+        }
+        if (eTag) {
+          res.setHeader("ETag", eTag);
+        }
+        if (finalType.includes("pdf") || r2Key.toLowerCase().endsWith(".pdf")) {
+          const filename = path.posix.basename(r2Key) || "document.pdf";
+          res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+        }
+        console.info("[FILE ACCESS]", {
+          storage: "r2",
+          decision: "allowed",
+          fileUrl,
+          normalizedPath,
+          rootFolder,
+          roleType,
+          contentType: finalType,
+        });
+        stream.on("error", (streamError) => {
+          console.error("[FILE ACCESS] R2 stream error:", streamError);
+          if (!res.headersSent) {
+            return next(streamError);
+          }
+          res.end();
+        });
+        res.on("close", () => {
+          if (typeof stream.destroy === "function") {
+            stream.destroy();
+          }
+        });
+        return stream.pipe(res);
+      }
+
+      const baseDir = process.cwd();
+      let absolutePath = "";
+
+      if (normalizedPath.startsWith("/uploads")) {
+        absolutePath = path.join(baseDir, normalizedPath.replace(/^\//, ""));
+      } else if (normalizedPath.startsWith("/storage")) {
+        absolutePath = path.join(baseDir, normalizedPath.replace(/^\//, ""));
+      } else {
+        throw new ApiError(400, "Invalid file path");
+      }
+
+      if (!fs.existsSync(absolutePath)) {
+        if (LOG_FILE_DEBUG) {
+          console.warn("FILE NOT FOUND:", {
+            path: normalizedPath,
+            rootFolder,
+            roleType,
+          });
+        }
+        throw new ApiError(404, "File not found");
+      }
+
+      if (LOG_FILE_DEBUG) {
+        console.log("FILE DEBUG:", {
+          fileUrl: debugFileUrl,
+          normalizedPath,
+          absolutePath,
+          exists: fs.existsSync(absolutePath),
+        });
+      }
+
+      const mimeType = mime.lookup(absolutePath) || "application/octet-stream";
+      debugStorage = "local";
+
+      if (res.headersSent) {
+        return;
+      }
+
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      if (String(mimeType).includes("pdf") || absolutePath.toLowerCase().endsWith(".pdf")) {
+        const filename = path.basename(absolutePath) || "document.pdf";
+        res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+      }
+
+      console.info("[FILE ACCESS]", {
+        storage: "local",
+        decision: "allowed",
+        fileUrl,
+        normalizedPath,
+        rootFolder,
+        roleType,
+        contentType: mimeType,
+      });
+      return res.sendFile(absolutePath);
+    }
 
     async function teacherHasClassSubjectAccess(
       teacherId: string,
@@ -558,6 +675,132 @@ export async function secureFileAccess(
       return false;
     }
 
+    // Chat attachment file access (room member-based authorization).
+    // IMPORTANT: If this file belongs to chat, we must STOP here (no fall-through to other checks).
+    const extractInnerFileUrl = (value: string) => {
+      try {
+        const parsed = new URL(value);
+        const inner = parsed.searchParams.get("fileUrl");
+        return inner ? safeDecodeURIComponent(inner) : null;
+      } catch {
+        // Not an absolute URL. Try parsing as path-only URL.
+      }
+      try {
+        const parsed = new URL(`http://local${value.startsWith("/") ? "" : "/"}${value}`);
+        const inner = parsed.searchParams.get("fileUrl");
+        return inner ? safeDecodeURIComponent(inner) : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const expandPathVariants = (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) return [];
+      const variants = new Set<string>([trimmed]);
+      if (trimmed.startsWith("/")) {
+        variants.add(trimmed.slice(1));
+      } else {
+        variants.add(`/${trimmed}`);
+      }
+      return Array.from(variants);
+    };
+
+    const chatLookupCandidates = Array.from(
+      new Set(
+        [
+          normalizedPath,
+          fileUrl,
+          fileUrlRaw,
+          extractInnerFileUrl(fileUrl),
+          extractInnerFileUrl(fileUrlRaw),
+        ]
+          .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+          .flatMap((v) => expandPathVariants(v))
+      )
+    );
+
+    const chatMessage = await prisma.chatMessage.findFirst({
+      where: {
+        OR: chatLookupCandidates.map((candidate) => ({ fileUrl: candidate })),
+      },
+      include: {
+        room: true,
+      },
+    });
+
+    if (chatMessage) {
+      const chatRoomMemberModel = (prisma as unknown as { chatRoomMember?: any }).chatRoomMember;
+      const hasMemberModel = typeof chatRoomMemberModel?.findFirst === "function";
+      const isMemberFromModel =
+        hasMemberModel
+          ? await chatRoomMemberModel.findFirst({
+              where: {
+                roomId: chatMessage.roomId,
+                userId: userId,
+              },
+            })
+          : null;
+
+      let isMemberFromRaw: { id: string } | null = null;
+      let hasMemberTable = false;
+      if (!chatRoomMemberModel) {
+        try {
+          const tableExistsRows = await prisma.$queryRaw<{ exists: boolean }[]>`
+            SELECT (to_regclass('public."ChatRoomMember"') IS NOT NULL) as "exists"
+          `;
+          hasMemberTable = Boolean(tableExistsRows?.[0]?.exists);
+          if (hasMemberTable) {
+            const rows = await prisma.$queryRaw<{ id: string }[]>`
+              SELECT "id"
+              FROM "ChatRoomMember"
+              WHERE "roomId" = ${chatMessage.roomId}
+                AND "userId" = ${userId}
+              LIMIT 1
+            `;
+            isMemberFromRaw = rows?.[0] ?? null;
+          }
+        } catch {
+          // Ignore: DB/table may not exist in some environments
+        }
+      }
+
+      const isMember = Boolean(isMemberFromModel || isMemberFromRaw);
+      const memberAuthAvailable = hasMemberModel || hasMemberTable;
+
+      const allowed = memberAuthAvailable
+        ? isMember
+        : isAdmin
+          ? true
+          : await canJoinChatRoomSafe(
+              schoolId,
+              { userId, roleType },
+              {
+                roomId: chatMessage.roomId,
+                classId: chatMessage.room.classId,
+                sectionId: chatMessage.room.sectionId,
+                subjectId: chatMessage.room.subjectId,
+              }
+            );
+
+      console.log("[CHAT FILE ACCESS]", {
+        userId: user.id,
+        roomId: chatMessage.roomId,
+        allowed,
+      });
+
+      if (!allowed) {
+        console.log("[FILE ACCESS DENIED - CHAT]", {
+          userId: user.id,
+          roomId: chatMessage.roomId,
+        });
+        throw new ApiError(403, "Forbidden");
+      }
+
+      // allow access
+      return serveResolvedFile();
+    }
+
     if (isClassroomFile) {
       const allowed = await ensureClassroomFileAccess();
       if (!allowed) {
@@ -729,110 +972,7 @@ export async function secureFileAccess(
     } else if (!isAdmin) {
       throw new ApiError(403, "Forbidden");
     }
-
-    if (isR2) {
-      debugStorage = "r2";
-      const { stream, contentType, contentLength, eTag } = await downloadFile(r2Key);
-
-      if (res.headersSent) {
-        if (typeof stream.destroy === "function") {
-          stream.destroy();
-        }
-        return;
-      }
-
-      const finalType = contentType ?? "application/octet-stream";
-      res.setHeader("Content-Type", finalType);
-      res.setHeader("Cache-Control", "private, max-age=3600");
-      if (contentLength !== null) {
-        res.setHeader("Content-Length", contentLength.toString());
-      }
-      if (eTag) {
-        res.setHeader("ETag", eTag);
-      }
-      if (finalType.includes("pdf") || r2Key.toLowerCase().endsWith(".pdf")) {
-        const filename = path.posix.basename(r2Key) || "document.pdf";
-        res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
-      }
-      console.info("[FILE ACCESS]", {
-        storage: "r2",
-        decision: "allowed",
-        fileUrl,
-        normalizedPath,
-        rootFolder,
-        roleType,
-        contentType: finalType,
-      });
-      stream.on("error", (streamError) => {
-        console.error("[FILE ACCESS] R2 stream error:", streamError);
-        if (!res.headersSent) {
-          return next(streamError);
-        }
-        res.end();
-      });
-      res.on("close", () => {
-        if (typeof stream.destroy === "function") {
-          stream.destroy();
-        }
-      });
-      return stream.pipe(res);
-    }
-
-    const baseDir = process.cwd();
-    let absolutePath = "";
-
-    if (normalizedPath.startsWith("/uploads")) {
-      absolutePath = path.join(baseDir, normalizedPath.replace(/^\//, ""));
-    } else if (normalizedPath.startsWith("/storage")) {
-      absolutePath = path.join(baseDir, normalizedPath.replace(/^\//, ""));
-    } else {
-      throw new ApiError(400, "Invalid file path");
-    }
-
-    if (!fs.existsSync(absolutePath)) {
-      if (LOG_FILE_DEBUG) {
-        console.warn("FILE NOT FOUND:", {
-          path: normalizedPath,
-          rootFolder,
-          roleType,
-        });
-      }
-      throw new ApiError(404, "File not found");
-    }
-
-    if (LOG_FILE_DEBUG) {
-      console.log("FILE DEBUG:", {
-        fileUrl: debugFileUrl,
-        normalizedPath,
-        absolutePath,
-        exists: fs.existsSync(absolutePath),
-      });
-    }
-
-    const mimeType = mime.lookup(absolutePath) || "application/octet-stream";
-    debugStorage = "local";
-
-    if (res.headersSent) {
-      return;
-    }
-
-    res.setHeader("Content-Type", mimeType);
-    res.setHeader("Cache-Control", "private, max-age=3600");
-    if (String(mimeType).includes("pdf") || absolutePath.toLowerCase().endsWith(".pdf")) {
-      const filename = path.basename(absolutePath) || "document.pdf";
-      res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
-    }
-
-    console.info("[FILE ACCESS]", {
-      storage: "local",
-      decision: "allowed",
-      fileUrl,
-      normalizedPath,
-      rootFolder,
-      roleType,
-      contentType: mimeType,
-    });
-    return res.sendFile(absolutePath);
+    return serveResolvedFile();
   } catch (error) {
     const status = error instanceof ApiError ? error.status : undefined;
     if (status === 401 || status === 403) {
@@ -845,6 +985,13 @@ export async function secureFileAccess(
         roleType: debugRoleType,
         status,
       });
+      if (status === 403) {
+        console.log("[FILE ACCESS DENIED]", {
+          userId: debugUserId,
+          role: debugRoleType,
+          filePath: debugNormalizedPath,
+        });
+      }
     } else {
       console.info("[FILE ACCESS]", {
         storage: debugStorage || "unknown",

@@ -11,7 +11,6 @@ import { cacheInvalidateByPrefix } from "@/core/cacheService";
 
 import type { CreateOrderInput, VerifyPaymentInput, ManualPaymentInput } from "@/modules/payment/validation";
 import { getStudentFeeStatus } from "@/modules/fee/fee.service";
-import { cacheInvalidateByPrefix } from "@/core/cacheService";
 import { trigger } from "@/modules/notification/service";
 
 type PdfDocument = InstanceType<typeof PDFDocument>;
@@ -22,7 +21,7 @@ type GatewayUpdateResult =
   | { action: "UPDATED"; payment: { id: string; status: string }; feeUpdated: boolean; studentId: string };
 
 async function resolveRollNumber(
-  tx: typeof prisma,
+  tx: any,
   payment: {
     student: { id: string; fullName: string | null; registrationNumber: string | null };
     feeTerm: { academicYearId: string } | null;
@@ -44,7 +43,7 @@ type FeeSyncResolution =
   | { ok: false; reason: string; metadata?: Record<string, unknown> };
 
 async function resolveFeeSyncContext(
-  tx: typeof prisma,
+  tx: any,
   payment: {
     feeTerm: { academicYearId: string } | null;
     student: { id: string; schoolId: string | null };
@@ -108,7 +107,7 @@ export async function applyGatewayPaymentUpdate(params: {
   rawPayload?: unknown | null;
   gatewayEventId?: string | null;
 }): Promise<GatewayUpdateResult> {
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx): Promise<GatewayUpdateResult> => {
     const payment = await tx.payment.findFirst({
       where: { gatewayOrderId: params.gatewayOrderId },
       include: {
@@ -155,7 +154,7 @@ export async function applyGatewayPaymentUpdate(params: {
         method: "RAZORPAY",
         source: params.source,
         errorMessage: params.errorMessage ?? null,
-        rawPayload: params.rawPayload ?? null,
+        rawPayload: (params.rawPayload as any) ?? Prisma.JsonNull,
       },
     });
 
@@ -241,7 +240,7 @@ export async function applyGatewayPaymentUpdate(params: {
 }
 
 export async function createPaymentOrder(input: CreateOrderInput, schoolId: string) {
-  let amount = input.amount;
+  let amount = input.requestedAmount ?? input.amount;
 
   if (input.studentId) {
     const feeStatus = await getStudentFeeStatus(
@@ -370,7 +369,7 @@ export async function createPaymentLog(input: {
       method: input.method,
       source: input.source ?? "SYSTEM",
       errorMessage: input.errorMessage ?? null,
-      rawPayload: input.rawPayload ?? null,
+      rawPayload: (input.rawPayload as any) ?? Prisma.JsonNull,
     },
   });
 }

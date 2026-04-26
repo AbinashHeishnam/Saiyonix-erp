@@ -13,6 +13,7 @@ import {
   removePushToken as removePushTokenService,
   sendNotification as sendNotificationService,
 } from "@/modules/notification/service";
+import prisma from "@/core/db/prisma";
 import { notificationIdSchema } from "@/modules/notification/validation";
 import type { RegisterTokenInput, RemoveTokenInput } from "@/modules/notification/token.validation";
 import { env } from "@/config/env";
@@ -124,6 +125,28 @@ export async function markAllRead(
     const userId = getUserId(req);
     const data = await markAllReadService(schoolId, userId);
     return success(res, data, "All notifications marked as read");
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function remove(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<Response | void> {
+  try {
+    const userId = getUserId(req);
+    const id = parseId(req.params.id);
+
+    await prisma.notificationRecipient.deleteMany({
+      where: {
+        notificationId: id,
+        userId: userId,
+      },
+    });
+
+    return success(res, null, "Notification deleted");
   } catch (error) {
     return next(error);
   }

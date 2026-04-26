@@ -1,0 +1,18 @@
+import { Router } from "express";
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { requirePermission } from "../../middleware/permission.middleware";
+import { allowRoles } from "../../middleware/rbac.middleware";
+import { validate } from "../../middleware/validate.middleware";
+import { create, getActive, getById, getPrevious, list, remove, switchYear, transitionMeta, update, } from "@/modules/academicYear/controller";
+import { academicYearIdParamSchema, createAcademicYearSchema, listAcademicYearQuerySchema, switchAcademicYearSchema, updateAcademicYearSchema, } from "@/modules/academicYear/validation";
+const academicYearRouter = Router();
+academicYearRouter.post("/", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("academicYear:create"), validate(createAcademicYearSchema), create);
+academicYearRouter.get("/", authMiddleware, validate({ query: listAcademicYearQuerySchema }), list);
+academicYearRouter.get("/active", authMiddleware, getActive);
+academicYearRouter.get("/previous", authMiddleware, getPrevious);
+academicYearRouter.get("/transition-meta", authMiddleware, transitionMeta);
+academicYearRouter.get("/:id", authMiddleware, validate({ params: academicYearIdParamSchema }), getById);
+academicYearRouter.patch("/:id", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("academicYear:update"), validate({ params: academicYearIdParamSchema, body: updateAcademicYearSchema }), update);
+academicYearRouter.delete("/:id", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("academicYear:delete"), validate({ params: academicYearIdParamSchema }), remove);
+academicYearRouter.post("/switch", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("academicYear:update"), validate(switchAcademicYearSchema), switchYear);
+export default academicYearRouter;

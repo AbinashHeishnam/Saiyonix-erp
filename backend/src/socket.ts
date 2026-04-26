@@ -19,8 +19,14 @@ const allowedOrigins = [
 
 export function initSocket(httpServer: HttpServer) {
   const io = new Server(httpServer, {
+    path: "/socket.io",
     cors: {
-      origin: allowedOrigins,
+      origin: (origin, callback) => {
+        // React Native / native websocket clients may not send an Origin header.
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error("Not allowed by CORS"));
+      },
       credentials: true,
     },
   });
@@ -147,8 +153,18 @@ export function initSocket(httpServer: HttpServer) {
         }
         try {
           const key = `chat:${payload.userId}:${roomId}`;
-          const redisCount = await rateLimitRedis(key, 5, 1);
-          if (!redisCount) {
+          try {
+            const redisCount = await rateLimitRedis(key, 5, 1);
+            if (!redisCount) {
+              const last = sendThrottle.get(key) ?? 0;
+              if (Date.now() - last < 500) {
+                logSecurity("rate_limit_send_message", { userId: payload.userId, roomId });
+                return;
+              }
+              sendThrottle.set(key, Date.now());
+            }
+          } catch {
+            // If Redis is unavailable, fall back to in-memory throttling.
             const last = sendThrottle.get(key) ?? 0;
             if (Date.now() - last < 500) {
               logSecurity("rate_limit_send_message", { userId: payload.userId, roomId });
@@ -157,8 +173,7 @@ export function initSocket(httpServer: HttpServer) {
             sendThrottle.set(key, Date.now());
           }
         } catch (err) {
-          logSecurity("rate_limit_send_message", { userId: payload.userId, roomId });
-          return;
+          // Never block chat sending due to rate limiter errors.
         }
 
         const saved = await sendChatRoomMessage(

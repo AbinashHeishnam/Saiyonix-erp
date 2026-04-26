@@ -1,0 +1,13 @@
+import { Router } from "express";
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { requirePermission } from "../../middleware/permission.middleware";
+import { allowRoles } from "../../middleware/rbac.middleware";
+import { heavyJobLimiter } from "../../middleware/rateLimiter.middleware";
+import { validate } from "../../middleware/validate.middleware";
+import { create, createBulk, update } from "@/modules/marks/controller";
+import { bulkCreateMarksSchema, createMarkSchema, markIdParamSchema, updateMarkSchema, } from "@/modules/marks/validation";
+const marksRouter = Router();
+marksRouter.post("/", authMiddleware, allowRoles("TEACHER"), requirePermission("marks:create"), validate(createMarkSchema), create);
+marksRouter.post("/bulk", authMiddleware, heavyJobLimiter, allowRoles("TEACHER"), requirePermission("marks:create"), validate(bulkCreateMarksSchema), createBulk);
+marksRouter.patch("/:id", authMiddleware, allowRoles("TEACHER"), requirePermission("marks:update"), validate({ params: markIdParamSchema, body: updateMarkSchema }), update);
+export default marksRouter;

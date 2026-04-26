@@ -810,13 +810,19 @@ export default function TeacherClassroomScreen() {
             </View>
             {chatError ? <Text style={styles.errorText}>{chatError}</Text> : null}
             <ScrollView style={styles.chatList}>
-              {chatMessages.map((msg: any) => (
+              {chatMessages.map((msg: any) => {
+                const isMine = msg.senderId === user?.id;
+                const rawSenderName = typeof msg.senderName === "string" ? msg.senderName : null;
+                const senderName = isMine ? "You" : rawSenderName ?? "User";
+                const senderLabel = msg.senderRole === "TEACHER" ? `${senderName} (teacher)` : senderName;
+                return (
                 <View key={msg.id ?? msg.clientId} style={styles.chatBubble}>
-                  <Text style={styles.chatAuthor}>{msg.senderName ?? "User"}</Text>
+                  <Text style={styles.chatAuthor}>{senderLabel}</Text>
                   <Text style={styles.chatText}>{msg.message ?? msg.messageText ?? ""}</Text>
                   <Text style={styles.chatMeta}>{msg.createdAt ? formatDateTime(msg.createdAt) : ""}</Text>
                 </View>
-              ))}
+              );
+              })}
             </ScrollView>
             <View style={styles.chatInputRow}>
               <TextInput

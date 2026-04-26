@@ -3,6 +3,7 @@ import { z } from "zod";
 export const createOrderSchema = z
   .object({
     amount: z.number().positive().optional(),
+    requestedAmount: z.number().positive().optional(),
     currency: z.string().min(1).optional(),
     receipt: z.string().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),

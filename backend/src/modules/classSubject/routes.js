@@ -1,0 +1,14 @@
+import { Router } from "express";
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { requirePermission } from "../../middleware/permission.middleware";
+import { allowRoles } from "../../middleware/rbac.middleware";
+import { validate } from "../../middleware/validate.middleware";
+import { create, getById, list, remove, update } from "@/modules/classSubject/controller";
+import { classSubjectIdParamSchema, createClassSubjectSchema, listClassSubjectQuerySchema, updateClassSubjectSchema, } from "@/modules/classSubject/validation";
+const classSubjectRouter = Router();
+classSubjectRouter.post("/", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("classSubject:create"), validate(createClassSubjectSchema), create);
+classSubjectRouter.get("/", authMiddleware, validate({ query: listClassSubjectQuerySchema }), list);
+classSubjectRouter.get("/:id", authMiddleware, validate({ params: classSubjectIdParamSchema }), getById);
+classSubjectRouter.patch("/:id", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("classSubject:update"), validate({ params: classSubjectIdParamSchema, body: updateClassSubjectSchema }), update);
+classSubjectRouter.delete("/:id", authMiddleware, allowRoles("ADMIN", "ACADEMIC_SUB_ADMIN"), requirePermission("classSubject:delete"), validate({ params: classSubjectIdParamSchema }), remove);
+export default classSubjectRouter;

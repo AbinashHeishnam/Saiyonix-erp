@@ -11,11 +11,15 @@ export type NotificationInput = {
   message: string;
   senderId: string;
 
-  targetType: "ALL" | "ROLE" | "USER" | "CLASS";
+  targetType: "ALL" | "ROLE" | "USER" | "CLASS" | "SECTION";
+  scope?: "ALL" | "ROLE" | "CLASS" | "SECTION" | "USER";
 
   role?: "ADMIN" | "TEACHER" | "STUDENT" | "PARENT";
   userIds?: string[];
   classId?: string;
+  sectionId?: string;
+  studentId?: string;
+  teacherId?: string;
 
   meta?: Record<string, any>;
 };
@@ -306,11 +310,11 @@ export async function resolveRecipients(input: NotificationInput): Promise<strin
       typeof meta.academicYearId === "string"
         ? meta.academicYearId
         : (
-            await prisma.academicYear.findFirst({
-              where: { schoolId: sender.schoolId, isActive: true },
-              select: { id: true },
-            })
-          )?.id ?? null;
+          await prisma.academicYear.findFirst({
+            where: { schoolId: sender.schoolId, isActive: true },
+            select: { id: true },
+          })
+        )?.id ?? null;
     const sectionId = typeof meta.sectionId === "string" ? meta.sectionId : null;
     const includeParents = meta.includeParents === true;
 
@@ -336,14 +340,52 @@ export async function resolveRecipients(input: NotificationInput): Promise<strin
   throw new ApiError(400, "Invalid targetType");
 }
 
+import { resolveNotificationRecipients, NotificationType, TargetScope, UserRole as ResolverUserRole } from "./notificationTargetResolver";
+
 export async function createAndDispatchNotification(
   input: NotificationInput
 ): Promise<NotificationDispatchResult> {
-  ensureValidTargetType(input);
+  if (input.targetType !== "SECTION") {
+    ensureValidTargetType(input);
+  }
   console.info("[NOTIF ENGINE] type:", input.type);
 
   const sender = await ensureSenderContext(input.senderId);
-  const resolvedRecipients = uniq(await resolveRecipients(input));
+
+  // Map to new structured payload
+  const notifTypeStr = input.type.toUpperCase();
+  let resolvedType = NotificationType.SYSTEM;
+  if (notifTypeStr.includes("NOTICE")) resolvedType = NotificationType.NOTICE;
+  else if (notifTypeStr.includes("ATTENDANCE")) resolvedType = NotificationType.ATTENDANCE;
+  else if (notifTypeStr.includes("MESSAGE")) resolvedType = NotificationType.MESSAGE;
+  else if (notifTypeStr.includes("ASSIGNMENT")) resolvedType = NotificationType.ASSIGNMENT;
+  else if (notifTypeStr.includes("RESULT")) resolvedType = NotificationType.RESULT;
+  else if (notifTypeStr.includes("EXAM")) resolvedType = NotificationType.EXAM;
+  else if (notifTypeStr.includes("TIMETABLE")) resolvedType = NotificationType.TIMETABLE;
+  else if (notifTypeStr.includes("CALENDAR")) resolvedType = NotificationType.CALENDAR;
+  else if (notifTypeStr.includes("ADMIT_CARD")) resolvedType = NotificationType.ADMIT_CARD;
+  else if (notifTypeStr.includes("PROMOTION")) resolvedType = NotificationType.PROMOTION;
+  else if (notifTypeStr.includes("LEAVE")) resolvedType = NotificationType.LEAVE_STATUS;
+  else if (notifTypeStr.includes("CERTIFICATE")) resolvedType = NotificationType.CERTIFICATE_STATUS;
+  else if (notifTypeStr.includes("FEE")) resolvedType = NotificationType.FEE_UPDATE;
+
+  const payload = {
+    type: resolvedType,
+    scope: (input.scope ?? input.targetType) as TargetScope,
+    role: input.role as ResolverUserRole,
+    classId: input.classId,
+    sectionId: input.sectionId ?? input.meta?.sectionId,
+    userIds: input.userIds,
+    studentId: input.studentId,
+    teacherId: input.teacherId,
+    schoolId: sender.schoolId,
+    senderId: input.senderId,
+    title: input.title,
+    message: input.message,
+    fileUrl: input.meta?.fileUrl
+  };
+
+  const resolvedRecipients = await resolveNotificationRecipients(payload);
   console.info("[NOTIF ENGINE] recipients:", resolvedRecipients.length);
 
   if (resolvedRecipients.length === 0) {

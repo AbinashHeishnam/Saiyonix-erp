@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import { getParentProfile, getStudentMe, updateParentProfile } from "@saiyonix/api";
+import { getParentProfile, getStudentMe, resolvePublicUrl, updateParentProfile } from "@saiyonix/api";
 import { useAuth } from "@saiyonix/auth";
 import { Button, Card, Input, LoadingState, PageHeader, colors, typography } from "@saiyonix/ui";
 
 export default function StudentParentProfileScreen() {
   const { role, logout } = useAuth();
-  const query = useQuery({
+  const query = useQuery<any>({
     queryKey: ["profile", role],
     queryFn: role === "PARENT" ? getParentProfile : getStudentMe,
   });
@@ -108,10 +108,23 @@ export default function StudentParentProfileScreen() {
               <View style={styles.list}>
                 {students.map((student: any) => (
                   <View key={student.id} style={styles.listItem}>
-                    <Text style={styles.title}>{student.fullName ?? "Student"}</Text>
-                    <Text style={styles.meta}>Reg. No: {student.registrationNumber ?? "—"}</Text>
-                    <Text style={styles.meta}>Admission No: {student.admissionNumber ?? "—"}</Text>
-                    <Text style={styles.meta}>Status: {student.status ?? "—"}</Text>
+                    <View style={styles.studentRow}>
+                      {student.profile?.profilePhotoUrl ? (
+                        <Image
+                          source={{ uri: resolvePublicUrl(student.profile.profilePhotoUrl) }}
+                          style={styles.studentPhoto}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={styles.studentPhotoPlaceholder} />
+                      )}
+                      <View style={styles.studentMeta}>
+                        <Text style={styles.title}>{student.fullName ?? "Student"}</Text>
+                        <Text style={styles.meta}>Reg. No: {student.registrationNumber ?? "—"}</Text>
+                        <Text style={styles.meta}>Admission No: {student.admissionNumber ?? "—"}</Text>
+                        <Text style={styles.meta}>Status: {student.status ?? "—"}</Text>
+                      </View>
+                    </View>
                   </View>
                 ))}
               </View>
@@ -122,6 +135,15 @@ export default function StudentParentProfileScreen() {
         </>
       ) : (
         <Card title="Student Profile" subtitle="Student details">
+          {data.profilePhotoUrl ? (
+            <View style={styles.photoWrap}>
+              <Image
+                source={{ uri: resolvePublicUrl(data.profilePhotoUrl) }}
+                style={styles.photo}
+                resizeMode="cover"
+              />
+            </View>
+          ) : null}
           <Text style={styles.meta}>Registration No: {data.registrationNumber ?? "—"}</Text>
           <Text style={styles.meta}>Admission No: {data.admissionNumber ?? "—"}</Text>
           <Text style={styles.meta}>Status: {data.status ?? "—"}</Text>
@@ -154,6 +176,27 @@ const styles = StyleSheet.create({
     borderColor: colors.ink[100],
     backgroundColor: colors.white,
   },
+  studentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  studentMeta: {
+    flex: 1,
+    gap: 2,
+  },
+  studentPhoto: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    backgroundColor: colors.ink[100],
+  },
+  studentPhotoPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    backgroundColor: colors.ink[100],
+  },
   title: {
     fontSize: 14,
     fontWeight: "600",
@@ -174,5 +217,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.sunrise[600],
     fontFamily: typography.fontBody,
+  },
+  photoWrap: {
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  photo: {
+    width: 96,
+    height: 96,
+    borderRadius: 999,
+    backgroundColor: colors.ink[100],
   },
 });

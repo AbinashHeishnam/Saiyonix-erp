@@ -1,0 +1,262 @@
+import prisma from "@/core/db/prisma";
+import { ApiError } from "@/core/errors/apiError";
+import { formatLocalDate, toLocalDateOnly } from "@/core/utils/localDate";
+import { DEFAULT_ATTENDANCE_THRESHOLDS } from "@/core/risk/attendanceRisk";
+import { normalizeDate } from "@/core/utils/date";
+import { getAttendanceBlockedDates, getSessionStartDate } from "@/modules/academicCalendar/service";
+const PRESENT_STATUSES = ["PRESENT", "LATE", "HALF_DAY", "EXCUSED"];
+function buildMonthRange(year, month) {
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = new Date(Date.UTC(year, month, 0));
+    return { start, end };
+}
+function getWarningLevels(rawWarnings) {
+    const warningLevels = Array.isArray(rawWarnings)
+        ? rawWarnings.filter((value) => typeof value === "number")
+        : [...DEFAULT_ATTENDANCE_THRESHOLDS];
+    return warningLevels.length > 0 ? warningLevels : [...DEFAULT_ATTENDANCE_THRESHOLDS];
+}
+const RISK_THRESHOLD = 75;
+async function getRiskThreshold(schoolId) {
+    const settings = await prisma.systemSetting.findMany({
+        where: {
+            schoolId,
+            settingKey: { in: ["ATTENDANCE_WARNING_LEVELS"] },
+        },
+        select: { settingKey: true, settingValue: true },
+    });
+    const byKey = new Map(settings.map((item) => [item.settingKey, item.settingValue]));
+    const warningLevels = getWarningLevels(byKey.get("ATTENDANCE_WARNING_LEVELS"));
+    return warningLevels.includes(RISK_THRESHOLD) ? RISK_THRESHOLD : RISK_THRESHOLD;
+}
+function summarizeStatusCounts(statuses, riskThreshold) {
+    const summary = {
+        totalDays: statuses.length,
+        presentDays: 0,
+        absentDays: 0,
+        lateDays: 0,
+        halfDays: 0,
+        excusedDays: 0,
+        attendancePercentage: 0,
+        riskFlag: false,
+    };
+    for (const status of statuses) {
+        if (status === "ABSENT") {
+            summary.absentDays += 1;
+            continue;
+        }
+        if (status === "LATE") {
+            summary.lateDays += 1;
+        }
+        if (status === "HALF_DAY") {
+            summary.halfDays += 1;
+        }
+        if (status === "EXCUSED") {
+            summary.excusedDays += 1;
+        }
+        summary.presentDays += 1;
+    }
+    summary.attendancePercentage = summary.totalDays
+        ? Math.round((summary.presentDays / summary.totalDays) * 10000) / 100
+        : 0;
+    summary.riskFlag = summary.attendancePercentage < riskThreshold;
+    return summary;
+}
+function createEmptySummary() {
+    return {
+        totalDays: 0,
+        presentDays: 0,
+        absentDays: 0,
+        lateDays: 0,
+        halfDays: 0,
+        excusedDays: 0,
+        attendancePercentage: 0,
+        riskFlag: false,
+    };
+}
+function applyStatusCount(summary, status, count) {
+    summary.totalDays += count;
+    if (status === "ABSENT") {
+        summary.absentDays += count;
+        return;
+    }
+    if (status === "LATE") {
+        summary.lateDays += count;
+    }
+    if (status === "HALF_DAY") {
+        summary.halfDays += count;
+    }
+    if (status === "EXCUSED") {
+        summary.excusedDays += count;
+    }
+    summary.presentDays += count;
+}
+function finalizeSummary(summary, riskThreshold) {
+    summary.attendancePercentage = summary.totalDays
+        ? Math.round((summary.presentDays / summary.totalDays) * 10000) / 100
+        : 0;
+    summary.riskFlag = summary.attendancePercentage < riskThreshold;
+}
+export async function getStudentMonthlySummary(params) {
+    const student = await prisma.student.findFirst({
+        where: { id: params.studentId, schoolId: params.schoolId, deletedAt: null },
+        select: { id: true },
+    });
+    if (!student) {
+        throw new ApiError(404, "Student not found");
+    }
+    const { start, end } = buildMonthRange(params.year, params.month);
+    const sessionStart = await getSessionStartDate(prisma, params.academicYearId);
+    const effectiveStart = sessionStart && sessionStart > start ? sessionStart : start;
+    if (effectiveStart > end) {
+        return {
+            studentId: params.studentId,
+            academicYearId: params.academicYearId,
+            month: params.month,
+            year: params.year,
+            ...createEmptySummary(),
+        };
+    }
+    const blockedDates = await getAttendanceBlockedDates({
+        academicYearId: params.academicYearId,
+        from: effectiveStart,
+        to: end,
+    });
+    const blockedArray = Array.from(blockedDates).map((value) => new Date(value));
+    const records = await prisma.studentAttendance.findMany({
+        where: {
+            studentId: params.studentId,
+            academicYearId: params.academicYearId,
+            attendanceDate: {
+                gte: effectiveStart,
+                lte: end,
+                ...(blockedArray.length > 0 ? { notIn: blockedArray } : {}),
+            },
+            student: { schoolId: params.schoolId, deletedAt: null },
+            section: { class: { schoolId: params.schoolId, deletedAt: null }, deletedAt: null },
+        },
+        select: { status: true },
+    });
+    const riskThreshold = await getRiskThreshold(params.schoolId);
+    const summary = summarizeStatusCounts(records.map((item) => item.status), riskThreshold);
+    return {
+        studentId: params.studentId,
+        academicYearId: params.academicYearId,
+        month: params.month,
+        year: params.year,
+        ...summary,
+    };
+}
+export async function getStudentMonthlySummaries(params) {
+    if (params.studentIds.length === 0) {
+        return new Map();
+    }
+    const { start, end } = buildMonthRange(params.year, params.month);
+    const sessionStart = await getSessionStartDate(prisma, params.academicYearId);
+    const effectiveStart = sessionStart && sessionStart > start ? sessionStart : start;
+    if (effectiveStart > end) {
+        const empty = new Map();
+        for (const studentId of params.studentIds) {
+            empty.set(studentId, {
+                studentId,
+                academicYearId: params.academicYearId,
+                month: params.month,
+                year: params.year,
+                ...createEmptySummary(),
+            });
+        }
+        return empty;
+    }
+    const blockedDates = await getAttendanceBlockedDates({
+        academicYearId: params.academicYearId,
+        from: effectiveStart,
+        to: end,
+    });
+    const blockedArray = Array.from(blockedDates).map((value) => new Date(value));
+    const riskThreshold = await getRiskThreshold(params.schoolId);
+    const grouped = await prisma.studentAttendance.findMany({
+        where: {
+            studentId: { in: params.studentIds },
+            academicYearId: params.academicYearId,
+            attendanceDate: {
+                gte: effectiveStart,
+                lte: end,
+                ...(blockedArray.length > 0 ? { notIn: blockedArray } : {}),
+            },
+            student: { schoolId: params.schoolId, deletedAt: null },
+            section: { class: { schoolId: params.schoolId, deletedAt: null }, deletedAt: null },
+        },
+        select: { studentId: true, status: true },
+    });
+    const summaries = new Map();
+    for (const row of grouped) {
+        const current = summaries.get(row.studentId) ?? createEmptySummary();
+        applyStatusCount(current, String(row.status), 1);
+        summaries.set(row.studentId, current);
+    }
+    for (const studentId of params.studentIds) {
+        const summary = summaries.get(studentId) ?? createEmptySummary();
+        finalizeSummary(summary, riskThreshold);
+        summaries.set(studentId, summary);
+    }
+    const result = new Map();
+    for (const [studentId, summary] of summaries.entries()) {
+        result.set(studentId, {
+            studentId,
+            academicYearId: params.academicYearId,
+            month: params.month,
+            year: params.year,
+            ...summary,
+        });
+    }
+    return result;
+}
+export async function getSchoolAttendanceSummary(params) {
+    const raw = params.date ? new Date(params.date) : new Date();
+    if (Number.isNaN(raw.getTime())) {
+        throw new ApiError(400, "Invalid date");
+    }
+    const school = await prisma.school.findUnique({
+        where: { id: params.schoolId },
+        select: { timezone: true },
+    });
+    const timeZone = school?.timezone ?? "Asia/Kolkata";
+    const date = toLocalDateOnly(normalizeDate(raw), timeZone);
+    const sessionStart = await getSessionStartDate(prisma, params.academicYearId);
+    if (sessionStart && date < sessionStart) {
+        return {
+            academicYearId: params.academicYearId,
+            date: formatLocalDate(date, timeZone),
+            ...createEmptySummary(),
+        };
+    }
+    const blocked = await getAttendanceBlockedDates({
+        academicYearId: params.academicYearId,
+        from: date,
+        to: date,
+    });
+    if (blocked.has(normalizeDate(date).toISOString())) {
+        return {
+            academicYearId: params.academicYearId,
+            date: formatLocalDate(date, timeZone),
+            ...createEmptySummary(),
+        };
+    }
+    const records = await prisma.studentAttendance.findMany({
+        where: {
+            academicYearId: params.academicYearId,
+            attendanceDate: date,
+            student: { schoolId: params.schoolId, deletedAt: null },
+            section: { class: { schoolId: params.schoolId, deletedAt: null }, deletedAt: null },
+        },
+        select: { status: true },
+    });
+    const riskThreshold = await getRiskThreshold(params.schoolId);
+    const summary = summarizeStatusCounts(records.map((item) => item.status), riskThreshold);
+    return {
+        academicYearId: params.academicYearId,
+        date: formatLocalDate(date, timeZone),
+        ...summary,
+    };
+}
+export { PRESENT_STATUSES };

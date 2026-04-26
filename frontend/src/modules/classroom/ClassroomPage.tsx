@@ -848,7 +848,8 @@ export default function ClassroomPage() {
               {groupChatMessages.length ? (
                 groupChatMessages.map((msg) => {
                   const isMine = msg.senderId === user?.id;
-                  const senderLabel = msg.senderName ?? msg.senderRole;
+                  const senderName = isMine ? "You" : msg.senderName ?? msg.senderRole;
+                  const senderLabel = msg.senderRole === "TEACHER" ? `${senderName} (teacher)` : senderName;
                   return (
                     <div
                       key={msg.id}
@@ -862,7 +863,9 @@ export default function ClassroomPage() {
                         {msg.replyTo && (
                           <div className="mb-2 rounded-xl border border-white/30 bg-white/20 px-2 py-1 text-[11px]">
                             <p className="font-semibold">
-                              {msg.replyTo.senderName ?? msg.replyTo.senderRole}
+                              {msg.replyTo.senderRole === "TEACHER"
+                                ? `${msg.replyTo.senderName ?? msg.replyTo.senderRole} (teacher)`
+                                : msg.replyTo.senderName ?? msg.replyTo.senderRole}
                             </p>
                             <p className="opacity-80">
                               {msg.replyTo.message ?? "Attachment"}

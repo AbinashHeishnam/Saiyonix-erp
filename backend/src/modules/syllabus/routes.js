@@ -1,0 +1,17 @@
+import { Router } from "express";
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { requirePermission } from "../../middleware/permission.middleware";
+import { allowRoles } from "../../middleware/rbac.middleware";
+import { validate } from "../../middleware/validate.middleware";
+import { addTopic, completeTopic, create, deleteTopic, list, publish, progress, updateTopic, } from "@/modules/syllabus/controller";
+import { createSyllabusSchema, createTopicSchema, listSyllabusQuerySchema, syllabusIdParamSchema, syllabusTopicIdParamSchema, updateTopicSchema, } from "@/modules/syllabus/validation";
+const syllabusRouter = Router();
+syllabusRouter.post("/", authMiddleware, allowRoles("TEACHER", "ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"), requirePermission("syllabus:create"), validate(createSyllabusSchema), create);
+syllabusRouter.post("/:id/topics", authMiddleware, allowRoles("TEACHER", "ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"), requirePermission("syllabus:update"), validate({ params: syllabusIdParamSchema, body: createTopicSchema }), addTopic);
+syllabusRouter.patch("/topics/:id", authMiddleware, allowRoles("TEACHER", "ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"), requirePermission("syllabus:update"), validate({ params: syllabusTopicIdParamSchema, body: updateTopicSchema }), updateTopic);
+syllabusRouter.patch("/:id/publish", authMiddleware, allowRoles("TEACHER", "ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"), requirePermission("syllabus:update"), validate({ params: syllabusIdParamSchema }), publish);
+syllabusRouter.delete("/topics/:id", authMiddleware, allowRoles("TEACHER", "ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"), requirePermission("syllabus:delete"), validate({ params: syllabusTopicIdParamSchema }), deleteTopic);
+syllabusRouter.get("/", authMiddleware, allowRoles("TEACHER", "STUDENT", "PARENT", "ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"), requirePermission("syllabus:read"), validate({ query: listSyllabusQuerySchema }), list);
+syllabusRouter.post("/topics/:id/complete", authMiddleware, allowRoles("TEACHER"), requirePermission("syllabus:update"), validate({ params: syllabusTopicIdParamSchema }), completeTopic);
+syllabusRouter.get("/:id/progress", authMiddleware, allowRoles("TEACHER", "STUDENT", "PARENT", "ADMIN", "ACADEMIC_SUB_ADMIN", "SUPER_ADMIN"), requirePermission("syllabus:read"), validate({ params: syllabusIdParamSchema }), progress);
+export default syllabusRouter;
